@@ -69,6 +69,8 @@ only after a verified deployment.
 
 ## ⚙️ How it works
 
+![NARA Baskets — pick a narrative, pay USDC/WETH/ETH, receive a receipt NFT for the exact tokens, then sell back to USDC or withdraw the underlying. Every basket includes NARA; fees flow to NARA stakers. Immutable: no owner, no pause, no upgrades, no admin sweep, no rebalancing, no oracles.](docs/assets/how-it-works.png)
+
 | Step | What happens |
 |------|--------------|
 | **1. Buy** | User sends USDC. Approved swap adapters buy each basket asset at its target weight. |
