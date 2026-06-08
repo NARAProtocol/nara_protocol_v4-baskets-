@@ -2,7 +2,7 @@
 
 # NARA Category Baskets
 
-**One-click, on-chain category baskets on Base. Pay USDC, own the basket, every buy routes value back to NARA.**
+**One-click, on-chain category baskets on Base. Pay USDC, hold a self-custodied receipt NFT for the exact tokens, withdraw any time. Fees route to NARA stakers.**
 
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.34-363636?logo=solidity)](https://soliditylang.org)
 [![Foundry](https://img.shields.io/badge/Built%20with-Foundry-FF6243)](https://book.getfoundry.sh/)
@@ -145,8 +145,8 @@ Five fee surfaces, all **immutable and constructor-fixed**, all routed to the fe
 | **Holding** | position | time-based |
 | **Referral** | split | pull-based, lifetime split to referrer |
 
-Suggested tiers (set per basket at deploy): BlueChip `10 bps` · Sector `20 bps` · HighRisk `30 bps` ·
-Degenerate `50 bps`. Every receipt basket must include NARA at or above `MIN_NARA_WEIGHT_BPS`.
+Fees are configured per basket at deploy (hard cap **100 bps / 1%** per side) and shown before every
+confirmation. Every receipt basket must include NARA at or above `MIN_NARA_WEIGHT_BPS`.
 
 ---
 
@@ -272,6 +272,24 @@ The v4 engine contracts are never modified from this package.
 | [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md) | Pre-deploy security gate |
 | [`docs/DEPLOYMENT_MANIFEST.md`](docs/DEPLOYMENT_MANIFEST.md) | Recorded after every deployment |
 | [`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md) | Current validation state |
+
+---
+
+## ⚠️ Disclaimer
+
+NARA Baskets are **not investment products** — they are non-custodial smart-contract execution tools. A
+basket is a fixed, immutable set of tokens; there is **no manager, no rebalancing, and no NARA custody
+of your assets**. Your receipt is an ERC-721 NFT representing claim to specific tokens you can withdraw
+yourself at any time (subject to those tokens transferring normally).
+
+- **No investment advice.** Token prices can go to **zero**. NARA does not promise any return.
+- **You hold the underlying.** Composition is set at deployment and cannot be changed; the contract has
+  no admin.
+- **You are responsible** for evaluating the tokens in each basket. NARA is not a fiduciary.
+- **No tax advice** — consult your own advisor.
+
+This README is software documentation, not an offer, solicitation, or financial promotion. Pre-launch:
+nothing here is deployed to mainnet.
 
 ---
 
