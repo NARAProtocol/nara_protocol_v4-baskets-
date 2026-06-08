@@ -1,0 +1,169 @@
+{
+  "$schema": "Launch basket curation file. Operator fills live NARA values before deploy. Frontend parity checks compare this file against the app basket config.",
+  "lastUpdated": "2026-06-04",
+  "chainId": 8453,
+  "baseAddresses": {
+    "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "WETH": "0x4200000000000000000000000000000000000006",
+    "cbBTC": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+    "cbETH": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+    "AERO": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+    "BRETT": "0x532f27101965dd16442E59d40670FaF5eBB142E4",
+    "TOSHI": "0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4",
+    "DEGEN": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed",
+    "MORPHO": "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842",
+    "VIRTUAL": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+    "VVV": "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf",
+    "AIXBT": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+    "UNISWAP_V3_SWAPROUTER02": "0x2626664c2603336E57B271c5C0b26F421741e481",
+    "UNISWAP_V4_UNIVERSAL_ROUTER": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+    "PERMIT2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    "NARA": "<filled after v4 token deploy>",
+    "NARA_ENGINE": "<filled after v4 engine deploy>",
+    "NARA_V4_HOOK": "<filled after v4 hook deploy>",
+    "NARA_V4_POOL_FEE": "<filled after v4 pool deploy>",
+    "NARA_V4_TICK_SPACING": "<filled after v4 pool deploy>"
+  },
+  "uniswapV3SelectorAllowlist": {
+    "executor": "0x2626664c2603336E57B271c5C0b26F421741e481",
+    "allowedSelectors": {
+      "exactInputSingle": "0x04e45aaf",
+      "exactInput": "0xb858183f"
+    },
+    "deniedSelectors": [
+      "multicall",
+      "selfPermit",
+      "unwrapWETH9WithFee",
+      "sweepTokenWithFee"
+    ],
+    "rationale": "Only direct exact-input swap selectors are allowlisted. Multicall is denied because it can bundle arbitrary calls inside an approved selector entry."
+  },
+  "baskets": [
+    {
+      "key": "base",
+      "category": "CORE",
+      "name": "CORE",
+      "symbol": "NARABP-CORE",
+      "riskTier": 1,
+      "tierLabel": "Basket",
+      "buyFeeBps": 10,
+      "sellFeeBps": 10,
+      "maxWeightDeviationBps": 25,
+      "minNaraWeightBps": 500,
+      "assets": [
+        { "symbol": "NARA", "address": "<NARA>", "weightBps": 1000, "v4Pool": { "fee": "<NARA_V4_POOL_FEE>", "tickSpacing": "<NARA_V4_TICK_SPACING>", "hook": "<NARA_V4_HOOK>", "pairToken": "USDC" } },
+        { "symbol": "cbBTC", "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", "weightBps": 3000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } },
+        { "symbol": "WETH", "address": "0x4200000000000000000000000000000000000006", "weightBps": 3000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } },
+        { "symbol": "AERO", "address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631", "weightBps": 2000, "aerodromePool": { "stable": false, "pairToken": "USDC" } },
+        { "symbol": "cbETH", "address": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22", "weightBps": 1000, "aerodromePool": { "stable": false, "pairToken": "USDC" } }
+      ],
+      "preDeployChecks": {
+        "everyAssetHasSupportedPool": "verify",
+        "everyAssetMinLiquidityUsd": 250000,
+        "everyAssetNotFeeOnTransfer": true,
+        "everyAssetNotBlacklistable": true,
+        "everyAssetNotPausable": true,
+        "everyAssetSourceVerifiedOnBasescan": true,
+        "v4CoreDeployedAndStable48h": true,
+        "feeCollectorAdminIsSafeWithTimelock": true
+      },
+      "deployed": {
+        "manager": "<filled after deploy>",
+        "deployedAt": "<filled after deploy>",
+        "deployedBlock": "<filled after deploy>",
+        "basescanUrl": "<filled after deploy>"
+      }
+    },
+    {
+      "key": "ai",
+      "category": "AI",
+      "name": "AI",
+      "symbol": "NARABP-AI",
+      "riskTier": 2,
+      "tierLabel": "Basket",
+      "buyFeeBps": 20,
+      "sellFeeBps": 20,
+      "maxWeightDeviationBps": 50,
+      "minNaraWeightBps": 1000,
+      "assets": [
+        { "symbol": "NARA", "address": "<NARA>", "weightBps": 1500, "v4Pool": { "fee": "<NARA_V4_POOL_FEE>", "tickSpacing": "<NARA_V4_TICK_SPACING>", "hook": "<NARA_V4_HOOK>", "pairToken": "USDC" } },
+        { "symbol": "VIRTUAL", "address": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b", "weightBps": 3500, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } },
+        { "symbol": "VVV", "address": "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf", "weightBps": 3000, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
+        { "symbol": "AIXBT", "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825", "weightBps": 2000, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } }
+      ],
+      "preDeployChecks": {
+        "everyAssetHasSupportedPool": "verify",
+        "everyAssetMinLiquidityUsd": 250000,
+        "everyAssetNotFeeOnTransfer": true,
+        "everyAssetSourceVerifiedOnBasescan": true,
+        "note": "Verify each candidate has Base-native liquidity on deploy day. If any route fails depth proof, deploy the basket as exit-only or defer it."
+      },
+      "deployed": null
+    },
+    {
+      "key": "meme",
+      "category": "CULTURE",
+      "name": "CULTURE",
+      "symbol": "NARABP-CULTURE",
+      "riskTier": 3,
+      "tierLabel": "Basket",
+      "buyFeeBps": 30,
+      "sellFeeBps": 30,
+      "maxWeightDeviationBps": 75,
+      "minNaraWeightBps": 1000,
+      "assets": [
+        { "symbol": "NARA", "address": "<NARA>", "weightBps": 1500, "v4Pool": { "fee": "<NARA_V4_POOL_FEE>", "tickSpacing": "<NARA_V4_TICK_SPACING>", "hook": "<NARA_V4_HOOK>", "pairToken": "USDC" } },
+        { "symbol": "BRETT", "address": "0x532f27101965dd16442E59d40670FaF5eBB142E4", "weightBps": 3500, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
+        { "symbol": "DEGEN", "address": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed", "weightBps": 2500, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
+        { "symbol": "TOSHI", "address": "0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4", "weightBps": 2500, "aerodromePool": { "stable": false, "pairToken": "USDC" } }
+      ],
+      "preDeployChecks": {
+        "everyAssetHasSupportedPool": "verify",
+        "everyAssetMinLiquidityUsd": 250000,
+        "everyAssetNotFeeOnTransfer": true,
+        "everyAssetSourceVerifiedOnBasescan": true,
+        "note": "Culture assets must be verified on each deploy day because liquidity moves fast. Re-check before announcement."
+      },
+      "deployed": null
+    },
+    {
+      "key": "defi",
+      "category": "FINANCE",
+      "name": "FINANCE",
+      "symbol": "NARABP-FINANCE",
+      "riskTier": 2,
+      "tierLabel": "Basket",
+      "buyFeeBps": 20,
+      "sellFeeBps": 20,
+      "maxWeightDeviationBps": 50,
+      "minNaraWeightBps": 1000,
+      "assets": [
+        { "symbol": "NARA", "address": "<NARA>", "weightBps": 1500, "v4Pool": { "fee": "<NARA_V4_POOL_FEE>", "tickSpacing": "<NARA_V4_TICK_SPACING>", "hook": "<NARA_V4_HOOK>", "pairToken": "USDC" } },
+        { "symbol": "AERO", "address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631", "weightBps": 3500, "aerodromePool": { "stable": false, "pairToken": "USDC" } },
+        { "symbol": "MORPHO", "address": "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842", "weightBps": 3000, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } },
+        { "symbol": "WETH", "address": "0x4200000000000000000000000000000000000006", "weightBps": 2000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } }
+      ],
+      "preDeployChecks": {
+        "everyAssetHasSupportedPool": "verify",
+        "everyAssetMinLiquidityUsd": 250000,
+        "everyAssetNotFeeOnTransfer": true,
+        "everyAssetSourceVerifiedOnBasescan": true,
+        "note": "Finance assets must have Base-native or fully wrapped representation. Re-check pool depth before broadcast."
+      },
+      "deployed": null
+    }
+  ],
+  "launchOrder": [
+    "v4 core deploy + 48h soak",
+    "Deploy full five-adapter basket set",
+    "Deploy NARAIndexFeeCollectorV2 with deployer admin",
+    "Set allowed selectors (exactInputSingle, exactInput)",
+    "Deploy CORE basket first",
+    "Hand off fee collector admin to Safe + renounce deployer roles",
+    "Verify Safe admin via Basescan",
+    "Sepolia run first then mainnet",
+    "Smoke test buy/sell/withdrawUnderlying on pilot basket",
+    "If clean: deploy CULTURE + FINANCE baskets",
+    "AI basket deploys only if route/depth proof passes on deploy day"
+  ]
+}
