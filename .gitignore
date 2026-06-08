@@ -7,3 +7,7 @@ broadcast/
 node_modules/
 archive/
 .DS_Store
+
+# internal-only (kept local, not published)
+CLAUDE.md
+docs/IDE_TASK.md
