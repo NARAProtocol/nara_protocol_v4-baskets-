@@ -35,11 +35,18 @@ never encoded as a property.
 
 Please report security issues **privately** — do not open a public issue for an exploitable bug.
 
-- Email: **security@naraprotocol.io** *(replace with the project's monitored security contact)*
+- Email: **security@naraprotocol.pro**
 - Include: affected contract + line, a description, and a reproducing transaction sequence if possible.
 
 We aim to acknowledge reports within 72 hours. A formal bug-bounty program will be announced ahead of
 mainnet launch.
+
+## Links
+
+- Website: **https://naraprotocol.pro**
+- Farcaster: **@naraprotocol**
+- X / Twitter: **[@NARA_protocol](https://x.com/NARA_protocol)**
+- Security contact: **security@naraprotocol.pro**
 
 ## Scope
 
