@@ -1,0 +1,51 @@
+name: Baskets CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# lib/ is gitignored (deps via forge install), so CI re-installs the pinned versions.
+# OZ is pinned to the version this repo was built against (lib/openzeppelin-contracts 5.0.2).
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  build-test:
+    name: build · test (non-fork)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Configure git (forge install commits)
+        run: |
+          git config --global user.email "ci@nara.local"
+          git config --global user.name "nara-ci"
+      - name: Install deps (pinned)
+        run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts@v5.0.2
+      - run: forge --version
+      - name: Build (with sizes)
+        run: forge build --sizes
+      - name: Test (non-fork; *Fork.t.sol self-skip without an RPC)
+        run: forge test -vv
+
+  fork:
+    name: fork tests (live Base liquidity)
+    runs-on: ubuntu-latest
+    env:
+      BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Configure git
+        run: |
+          git config --global user.email "ci@nara.local"
+          git config --global user.name "nara-ci"
+      - name: Install deps (pinned)
+        run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts@v5.0.2
+      - name: Fork adapter tests (real Base DEX state)
+        if: ${{ env.BASE_RPC_URL != '' }}
+        run: forge test --match-path "test/*Fork.t.sol" --fork-url "$BASE_RPC_URL" -vv
+      - name: No RPC secret configured
+        if: ${{ env.BASE_RPC_URL == '' }}
+        run: echo "Set the BASE_RPC_URL repo secret (Settings > Secrets > Actions) to run fork tests against live Base liquidity."
