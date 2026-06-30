@@ -15,10 +15,10 @@ Every live ERC721 receipt maps to one basket category.
 Every live receipt has stored amounts for every configured basket asset.
 Every receipt basket must include requiredAsset, intended to be NARA.
 requiredAsset weight must be at least minRequiredAssetWeightBps.
-Receipt owner or approved ERC721 operator can sell.
+Only the literal receipt owner can sell. The receipt is non-delegable: approve/setApprovalForAll revert (ApprovalsDisabled), isApprovedForAll is always false, and every action requires msg.sender == ownerOf. There are NO approved operators, and the receipt is NOT listable on approval-based marketplaces. The owner can still transfer it directly (transferFrom where msg.sender == owner).
 Normal exit sells the whole position only.
 Incident exit can sell selected assets and leave the receipt live.
-Raw underlying withdrawal is callable by the receipt owner or approved operator.
+Raw underlying withdrawal is callable only by the literal receipt owner (no approved operators — see above).
 Raw underlying withdrawal still requires every underlying token transfer to succeed.
 Partial raw withdrawal can withdraw selected assets and leave the receipt live.
 Buy fees are charged in the input token.
@@ -74,7 +74,7 @@ each stored asset amount must be nonzero.
 ## Receipt sell checks
 
 ```text
-caller must own tokenId or be approved for tokenId.
+caller must be the literal owner of tokenId (approvals are disabled; no approved/operator path).
 position must be live.
 output token must be an immutable-allowed payment token or requiredAsset/NARA.
 deadline enforced.

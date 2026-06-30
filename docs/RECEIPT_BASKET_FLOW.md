@@ -234,7 +234,7 @@ Users sell the whole basket through sellBasket.
 Fallback path:
 
 ```text
-Owner or approved operator can call withdrawUnderlying when all underlying token contracts transfer normally.
+Only the literal receipt owner can call withdrawUnderlying (the manager disables approvals and requires msg.sender == ownerOf — no approved-operator path) when all underlying token contracts transfer normally.
 Manager clears accounting, decrements totalAccountedAsset, and burns the receipt.
 Manager charges withdrawFeeBps in-kind on each asset before transfer.
 Manager sends the fee portion per asset to feeRecipient.
@@ -248,8 +248,8 @@ DEX liquidity, or routing break.
 Partial fallback path:
 
 ```text
-Owner or approved operator can call withdrawUnderlyingPartial for selected assets.
-Owner or approved operator can call sellBasketPartial for selected assets.
+Only the literal receipt owner can call withdrawUnderlyingPartial for selected assets (no approved-operator path).
+Only the literal receipt owner can call sellBasketPartial for selected assets (no approved-operator path).
 The receipt stays live while any asset amount remains.
 The receipt burns only when all stored asset amounts reach zero.
 ```
