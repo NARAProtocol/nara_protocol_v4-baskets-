@@ -92,10 +92,10 @@ pro-rata vault where mint and redeem follow existing vault balances.
 ```text
 1. Passing Foundry compile.
 2. Passing Foundry test suite.
-3. Deployment script for Base Sepolia.
-4. Deployment script for Base mainnet.
-5. Example deployment config for CORE, AI, FINANCE, CULTURE, and optional RWA baskets.
-6. Security notes for audit.
+3. Exact Base-mainnet fork rehearsal using `DeployMainnetReady.s.sol`.
+4. Base-mainnet deployment script that fails closed on address or admin errors.
+5. Deployment config for CORE, AI, FINANCE, and CULTURE.
+6. Security notes that state test, fork, and review evidence accurately.
 ```
 
 ## Hard constraints

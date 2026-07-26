@@ -1,114 +1,104 @@
-# NARA Baskets Deployment Manifest
+# Basket Deployment Manifests
 
-Last updated: 2026-06-03
+Last updated: 2026-07-26.
 
-This is the launch handoff checklist for a cold AI, deployer, or reviewer. A
-deployment is not production-ready until every basket has a saved manifest and
-passes the on-chain verifier.
+Status: no production basket manifest exists. No basket manager, V2 fee
+collector, or production adapter set is represented as deployed.
 
-## Canonical Scripts
+Production remains blocked until every launch basket has a saved manifest and
+the verifier and frontend parity checks pass.
 
-Use only:
+## Canonical locations
+
+Save one JSON file per basket:
+
+```text
+deployments/base-mainnet/base.json
+deployments/base-mainnet/ai.json
+deployments/base-mainnet/meme.json
+deployments/base-mainnet/defi.json
+```
+
+Legacy storage/env keys map to public names as follows:
+
+| Storage key | Public name |
+|---|---|
+| `base` | `CORE` |
+| `ai` | `AI` |
+| `meme` | `CULTURE` |
+| `defi` | `FINANCE` |
+
+The key is an implementation identifier, not a suitability or risk label.
+
+## Required manifest fields
+
+Each saved JSON object must contain:
+
+| Field | Type | Required value |
+|---|---|---|
+| `chainId` | integer | `8453` |
+| `basketKey` | string | One storage key from the table above |
+| `manager` | EVM address string | Deployed immutable manager |
+| `nara` | EVM address string | `0x65E247AA3aa9C0131b2984b894c3D24c41341D7A` |
+| `usdc` | EVM address string | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| `weth` | EVM address string | `0x4200000000000000000000000000000000000006` |
+| `feeCollector` | EVM address string | Deployed canonical V2 collector |
+| `adapters` | object | All five deployed adapter addresses |
+| `category` | string | Public name |
+| `basketName` | string | Public name |
+| `displayTier` | integer | Exact immutable constructor value; UI must not present it as suitability |
+| `assets` | EVM address array | Exact immutable asset order |
+| `weightsBps` | integer array | Exact immutable weights; total must equal `10_000` |
+| `paymentTokens` | EVM address array | Exact immutable payment-token order |
+| `buyFeeBps` | integer | Exact immutable value |
+| `sellFeeBps` | integer | Exact immutable value |
+| `withdrawFeeBps` | integer | Exact immutable value |
+| `holdingFeeBps` | integer | `0` for the first public launch |
+| `referralShareBps` | integer | `0` for the first public launch |
+| `maxWeightDeviationBps` | integer | Exact immutable value |
+| `minNaraWeightBps` | integer | Exact immutable value |
+| `minInputAmount` | decimal string | Positive raw payment-token-unit floor |
+| `configHash` | 32-byte hex string | On-chain manager `configHash()` |
+
+Do not create a manifest before deployment. Do not insert guessed addresses,
+zero addresses, example hashes, or copied values from another basket.
+
+## Deployment evidence
+
+For every manifest, record separately:
+
+- deployment transaction hash;
+- deployment block;
+- Basescan manager URL;
+- Basescan collector URL;
+- Basescan adapter URLs;
+- role-handoff transaction evidence;
+- exact-fork rehearsal evidence;
+- verifier output;
+- buy, sell, and `withdrawUnderlying` smoke evidence.
+
+## Verification
+
+Load verifier environment values directly from the saved manifest. Do not type
+or copy shortened addresses.
+
+Run from the workspace root:
 
 ```powershell
 & "$env:USERPROFILE\.foundry\bin\forge.exe" script `
-  script/DeployMainnetReady.s.sol:DeployMainnetReady `
+  nara-category-baskets-v1/script/VerifyDeployedBasket.s.sol:VerifyDeployedBasket `
   --root nara-category-baskets-v1 `
-  --rpc-url $env:BASE_MAINNET_RPC_URL `
-  --broadcast
-
-& "$env:USERPROFILE\.foundry\bin\forge.exe" script `
-  script/VerifyDeployedBasket.s.sol:VerifyDeployedBasket `
-  --root nara-category-baskets-v1 `
-  --rpc-url $env:BASE_MAINNET_RPC_URL
+  --rpc-url "$env:BASE_MAINNET_RPC_URL"
 ```
 
-Do not use `DeployBaseMainnet.s.sol` or `DeployBaseSepolia.s.sol`. They are
-legacy paths and intentionally revert.
+The verifier environment must describe the same basket as the selected
+manifest. `VerifyDeployedBasket.s.sol` checks chain ID, manager configuration,
+assets, weights, payment tokens, adapters, fees, required NARA weight, minimum
+input, and configuration hash.
 
-## Manifest Fields
+## Frontend parity
 
-Save one manifest per basket under:
-
-```text
-nara-category-baskets-v1/deployments/base-mainnet/base.json
-nara-category-baskets-v1/deployments/base-mainnet/ai.json
-nara-category-baskets-v1/deployments/base-mainnet/meme.json
-nara-category-baskets-v1/deployments/base-mainnet/defi.json
-```
-
-Legacy storage/env keys map to public names as follows: `base` → `CORE`, `ai` →
-`AI`, `meme` → `CULTURE`, and `defi` → `FINANCE`. The key is an implementation
-identifier, never a public suitability or risk label.
-
-Set `NARA_BASKET_MANIFEST_DIR` when using a different manifest directory.
-
-Each manifest must contain:
-
-```json
-{
-  "chainId": 8453,
-  "basketKey": "base",
-  "manager": "0x...",
-  "nara": "0x...",
-  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  "weth": "0x4200000000000000000000000000000000000006",
-  "feeCollector": "0x...",
-  "adapters": {
-    "uniswapV3": "0x...",
-    "aerodrome": "0x...",
-    "slipstream": "0x...",
-    "pancakeV3": "0x...",
-    "uniswapV4": "0x..."
-  },
-  "category": "CORE",
-  "basketName": "CORE",
-  "displayTier": 1,
-  "assets": ["0x...", "0x...", "0x..."],
-  "weightsBps": [1000, 3000, 3000, 2000, 1000],
-  "paymentTokens": ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "0x4200000000000000000000000000000000000006"],
-  "buyFeeBps": 10,
-  "sellFeeBps": 10,
-  "withdrawFeeBps": 10,
-  "holdingFeeBps": 0,
-  "referralShareBps": 0,
-  "maxWeightDeviationBps": 25,
-  "minNaraWeightBps": 500,
-  "minInputAmount": "25000000",
-  "configHash": "0x..."
-}
-```
-
-## Verifier Env
-
-Set these values from the saved manifest before running
-`VerifyDeployedBasket.s.sol`:
-
-```text
-EXPECTED_CHAIN_ID=8453
-MANAGER=0x...
-EXPECTED_NARA=0x...
-EXPECTED_FEE_RECIPIENT=0x...
-EXPECTED_CATEGORY=CORE
-EXPECTED_BASKET_NAME=CORE
-EXPECTED_DISPLAY_TIER=1
-EXPECTED_ASSETS=0x...,0x...,0x...
-EXPECTED_WEIGHTS=1000,3000,3000,2000,1000
-EXPECTED_PAYMENT_TOKENS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,0x4200000000000000000000000000000000000006
-EXPECTED_ADAPTERS=0x...,0x...,0x...,0x...,0x...
-EXPECTED_BUY_FEE_BPS=10
-EXPECTED_SELL_FEE_BPS=10
-EXPECTED_WITHDRAW_FEE_BPS=10
-EXPECTED_HOLDING_FEE_BPS=0
-EXPECTED_REFERRAL_SHARE_BPS=0
-EXPECTED_MAX_WEIGHT_DEV_BPS=25
-EXPECTED_MIN_NARA_WEIGHT_BPS=500
-EXPECTED_MIN_INPUT_AMOUNT=25000000
-```
-
-## Frontend Parity
-
-The verified addresses must match `apps/nara-baskets` production env:
+The production frontend reads these storage-key variables:
 
 ```text
 VITE_BASKET_MANAGER_BASE
@@ -128,71 +118,24 @@ VITE_NARA_V4_TICK_SPACING
 VITE_UNISWAP_V4_QUOTER
 ```
 
-If the frontend env and verified on-chain manager disagree, buying must stay in
-preview or disabled mode.
-
-The frontend production deploy gate enforces this with:
+Run:
 
 ```powershell
-cd apps/nara-baskets
+Set-Location apps/nara-baskets
 npm run check:manifest-env
 ```
 
-`deploy:cf:prod` runs this after `check:prod-env`; production cannot ship unless
-all four saved manifests match the frontend env and launch curation.
+If a manifest, on-chain manager, launch curation, or frontend variable
+disagrees, the basket must remain in preview.
 
-`minInputAmount` is a raw token-unit floor checked against the payment token.
-`25000000` is a 25 USDC floor for the USDC path. It is not USD-normalized for
-WETH; if WETH buys need a strict USD minimum, enforce that at the UI/operations
-layer or deploy a payment-token-specific minimum design in a future manager.
+## Current launch constraints
 
-For the first public Base launch, `check:manifest-env` enforces conservative
-defaults:
-
-- `withdrawFeeBps` must match the basket `sellFeeBps`.
+- `withdrawFeeBps` must equal the basket `sellFeeBps`.
 - `holdingFeeBps` must be `0`.
 - `referralShareBps` must be `0`.
 - `minInputAmount` must be a positive integer.
-
-Changing those values is a product/legal launch decision and must update the
-launch curation, frontend copy, and this gate together.
-
-## Required Launch Proof
-
-Before mainnet UI is marked live:
-
-1. `forge build --root nara-category-baskets-v1` passes.
-2. Non-fork tests pass.
-3. Aerodrome fork adapter tests pass against Base RPC.
-4. `VerifyDeployedBasket.s.sol` passes for every basket.
-5. The v4 NARA hook pool quote works through `VITE_UNISWAP_V4_QUOTER` or the
-   default Base v4 quoter.
-6. `apps/nara-baskets` typecheck, builder tests, and production build pass.
-7. No UI copy recommends a basket, implies suitability, or says the product is
-   safe, protected, guaranteed, optimized, or best.
-
-Current setup baseline from 2026-06-03:
-
-```text
-forge test --root nara-category-baskets-v1
-136 passed, 0 failed, 5 fork-dependent skips
-
-forge test --root nara-category-baskets-v1 --match-path test/AerodromeBasketAdapterV1.t.sol --fork-url <BASE_RPC_URL>
-15 passed, 0 failed, 0 skipped
-```
-
-The skipped non-fork tests are fork-gated proofs. The v4 fork proof remains
-post-NARA-pool work because it requires:
-
-```text
-V4_FORK_RPC
-V4_UNIVERSAL_ROUTER
-V4_PERMIT2
-V4_TOKEN_IN
-V4_TOKEN_OUT
-V4_AMOUNT_IN
-V4_FEE
-V4_TICK_SPACING
-V4_HOOK
-V4_WHALE
-```
+- `ADMIN` must be a contract Safe/timelock; the deploy script rejects an EOA.
+- `EXECUTOR_0_SELECTOR` is configured before the V2 collector permanently
+  freezes its allowlist.
+- Static vaults are not part of the launch and cannot use the V2 collector's
+  nonexistent V1 vault-redemption methods.

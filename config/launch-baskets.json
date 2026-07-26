@@ -27,8 +27,7 @@
   "uniswapV3SelectorAllowlist": {
     "executor": "0x2626664c2603336E57B271c5C0b26F421741e481",
     "allowedSelectors": {
-      "exactInputSingle": "0x04e45aaf",
-      "exactInput": "0xb858183f"
+      "exactInputSingle": "0x04e45aaf"
     },
     "deniedSelectors": [
       "multicall",
@@ -152,7 +151,7 @@
   "launchOrder": [
     "Confirm the existing v4 core and initialized NARA pool have completed a documented 48h soak",
     "Run the complete DeployMainnetReady transaction sequence on an exact Base-mainnet fork",
-    "Verify every executor and selector before the irreversible fee-collector allowlist freeze",
+    "Verify the executor and single EXECUTOR_0_SELECTOR before the irreversible fee-collector allowlist freeze",
     "Review the single broadcast sequence: five adapters, V2 collector, selectors, allowlist freeze, CORE manager, Safe handoff",
     "Broadcast only with a reviewed contract Safe/timelock ADMIN; an EOA is rejected",
     "Verify manager, collector roles, frozen allowlist, adapters, and Safe admin on Basescan",

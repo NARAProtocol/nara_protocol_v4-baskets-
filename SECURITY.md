@@ -23,13 +23,14 @@ NARA Baskets is designed to **remove trust surfaces** rather than add them:
 ## Verification performed
 
 - **136 tests passing** — unit, fuzz, and invariant suites (`forge test`).
-- **Static analysis** — Slither, clean of new issues on the basket contracts.
+- **5 fork-dependent tests skipped** when the required fork context is absent.
+- **Static analysis** — not currently verified in this local environment;
+  Slither is not installed and the local Aderyn installation is broken.
 - **Pre-deploy gate** — [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md) must pass before
   any mainnet value.
 
-Automated analysis is necessary but not sufficient. An independent human / competitive review is
-planned before mainnet deployment; automated tooling cannot catch economic or logic flaws that were
-never encoded as a property.
+No independent audit is claimed. Automated and internal review cannot guarantee
+the absence of economic or logic flaws that were never encoded as properties.
 
 ## Reporting a vulnerability
 

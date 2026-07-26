@@ -1,7 +1,6 @@
 # Validation Status
 
-Last validated: 2026-06-03 (historical baseline; current launch config not yet
-fully revalidated)
+Last validated: 2026-07-26.
 
 No independent audit is claimed. Current assurance is repository tests, fork
 verification, and documented internal multi-agent review.
@@ -36,7 +35,10 @@ RPC value or any `.env` secret in chat, logs, reports, or audit artifacts.
   --no-match-contract "AerodromeBasketAdapterV1Test|ForkBuyProof"
 
 # Aerodrome Base fork suite
-$rpc = <load BASE_MAINNET_RPC_URL or BASE_RPC_URL from nara-protocol-hardhat\.env>
+$envFile = Get-Content "nara-protocol-hardhat\.env"
+$rpcLine = $envFile | Where-Object { $_ -match '^(BASE_MAINNET_RPC_URL|BASE_RPC_URL)=' } | Select-Object -First 1
+if (-not $rpcLine) { throw "BASE_MAINNET_RPC_URL or BASE_RPC_URL is required" }
+$rpc = ($rpcLine -split '=', 2)[1].Trim().Trim('"').Trim("'")
 & "$env:USERPROFILE\.foundry\bin\forge.exe" test --root nara-category-baskets-v1 `
   --match-path "test/AerodromeBasketAdapterV1.t.sol" --fork-url $rpc
 
@@ -53,29 +55,30 @@ $rpc = <load BASE_MAINNET_RPC_URL or BASE_RPC_URL from nara-protocol-hardhat\.en
 ```text
 Forge version: 1.4.3-stable, called by absolute path.
 Build: pass.
-Non-fork tests: 122 passed, 0 failed.
-Aerodrome Base fork tests: 15 passed, 0 failed.
-Plain full test without fork context: 122 passed, 2 failed because fork-only
-suites need the right fork/deployment context.
+Full environment-free suite: 136 passed, 0 failed, 5 fork-dependent tests
+skipped (141 total).
 ```
 
 Covered non-fork suites:
 
 ```text
-NARAImmutableBasketPositionManagerV1Test    - 47 tests
+NARAImmutableBasketPositionManagerV1Test    - 48 tests
 CategoryIndexSuiteV1Test                    - 19 tests
 NARAIndexFeeCollectorV1Test                 - 14 tests
-NARAIndexFeeCollectorV2Test                 - 14 tests
+NARAIndexFeeCollectorV2Test                 - 15 tests
 AerodromeSlipstreamBasketAdapterV1Test      - 9 tests
 PancakeV3BasketAdapterV1Test                - 10 tests
 UniswapV3BasketAdapterV1Test                - 9 tests
 ```
 
-Fork-only suites:
+Fork-dependent suites skipped without their required context:
 
 ```text
-AerodromeBasketAdapterV1Test                - 15 tests, passed with Base RPC.
-ForkBuyProof.testForkBuyCore                - local Anvil proof only; env-driven.
+UniswapV3BasketAdapterV1ForkTest
+AerodromeBasketAdapterV1Test
+ForkBuyProof
+PancakeV3BasketAdapterV1ForkTest
+AerodromeSlipstreamBasketAdapterV1ForkTest
 ```
 
 `ForkBuyProof` is not a direct Base RPC test. It expects the local Anvil fork to
