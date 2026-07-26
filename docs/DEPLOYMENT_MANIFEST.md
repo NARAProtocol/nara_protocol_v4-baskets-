@@ -37,6 +37,10 @@ nara-category-baskets-v1/deployments/base-mainnet/meme.json
 nara-category-baskets-v1/deployments/base-mainnet/defi.json
 ```
 
+Legacy storage/env keys map to public names as follows: `base` → `CORE`, `ai` →
+`AI`, `meme` → `CULTURE`, and `defi` → `FINANCE`. The key is an implementation
+identifier, never a public suitability or risk label.
+
 Set `NARA_BASKET_MANIFEST_DIR` when using a different manifest directory.
 
 Each manifest must contain:
@@ -44,7 +48,7 @@ Each manifest must contain:
 ```json
 {
   "chainId": 8453,
-  "basketKey": "core",
+  "basketKey": "base",
   "manager": "0x...",
   "nara": "0x...",
   "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -68,7 +72,7 @@ Each manifest must contain:
   "withdrawFeeBps": 10,
   "holdingFeeBps": 0,
   "referralShareBps": 0,
-  "maxWeightDeviationBps": 100,
+  "maxWeightDeviationBps": 25,
   "minNaraWeightBps": 500,
   "minInputAmount": "25000000",
   "configHash": "0x..."
@@ -97,7 +101,7 @@ EXPECTED_SELL_FEE_BPS=10
 EXPECTED_WITHDRAW_FEE_BPS=10
 EXPECTED_HOLDING_FEE_BPS=0
 EXPECTED_REFERRAL_SHARE_BPS=0
-EXPECTED_MAX_WEIGHT_DEV_BPS=100
+EXPECTED_MAX_WEIGHT_DEV_BPS=25
 EXPECTED_MIN_NARA_WEIGHT_BPS=500
 EXPECTED_MIN_INPUT_AMOUNT=25000000
 ```
@@ -171,7 +175,7 @@ Current setup baseline from 2026-06-03:
 
 ```text
 forge test --root nara-category-baskets-v1
-129 passed, 0 failed, 2 skipped
+136 passed, 0 failed, 5 fork-dependent skips
 
 forge test --root nara-category-baskets-v1 --match-path test/AerodromeBasketAdapterV1.t.sol --fork-url <BASE_RPC_URL>
 15 passed, 0 failed, 0 skipped

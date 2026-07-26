@@ -221,10 +221,10 @@ This package is built to remove trust surfaces rather than add them:
   allowlisted executor and an explicit 4-byte selector (no multicall/batch selectors).
 - **Adapters are immutable** and verified to move exactly the accounted balance deltas.
 
-Current analysis: **136 tests passing** (unit + fuzz + invariant), static analysis (Slither) clean of
-new issues, and a pre-deploy [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md) gate.
-Automated tooling is necessary but not sufficient — an independent human/competitive review is planned
-before mainnet value. See [`SECURITY.md`](SECURITY.md) for scope and disclosure.
+The last fully recorded repository baseline is documented in
+[`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md). Do not infer current
+test or static-analysis status from older badges or prose. No independent audit
+is claimed. See [`SECURITY.md`](SECURITY.md) for scope and disclosure.
 
 > ⚠️ The immutable manager has **no post-deploy admin**. Get the constructor config right — it is
 > permanent.

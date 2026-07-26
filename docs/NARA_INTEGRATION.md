@@ -96,16 +96,16 @@ adapter included before basket deployment.
 ## Deployment order
 
 ```text
-1. Deploy NARAIndexFeeCollectorV2 with engine, NARA token, WETH, admin, and allowed executors.
-2. Allow the exact fee-collector executor selector with feeCollector.setAllowedSelector.
-3. Deploy one NARAImmutableBasketPositionManagerV1 per receipt basket with name, symbol, NARA required asset, minimum NARA weight, assets, weights, payment tokens (USDC + WETH), adapters (all five: UniswapV3, AerodromeAMM, AerodromeSlipstream, PancakeSwapV3, UniswapV4), buyFeeBps, sellFeeBps, withdrawFeeBps, maxWeightDeviationBps, and fee recipient.
-4. Verify each immutable receipt manager constructor config.
-5. No post-deploy receipt-manager role handoff exists because the manager has no roles.
-6. Optional static vault path: deploy CategoryIndexFactoryV1, IndexZapRouterV1, and IndexLensV1 separately.
-7. Optional static vault path: allowlist exact-transfer basket assets with factory.setAssetAllowed.
-8. Optional static vault path: use factory.createSeededVault for each static vault with feeRecipient = FeeCollector.
-9. Optional static vault path: allow each created vault in the fee collector with feeCollector.setAllowedVault.
-10. Frontend reads receipt baskets from immutable manager addresses and static vaults from factory/lens only if static vaults are enabled.
+1. Run the entire `DeployMainnetReady.s.sol` sequence on an exact Base-mainnet fork.
+2. Verify all five adapters, every executor, and every allowed selector before broadcast.
+3. Review the single production sequence as one unit: adapters, V2 collector, selectors,
+   irreversible allowlist freeze, immutable receipt manager, and contract Safe/timelock handoff.
+4. Broadcast only after the fork evidence and manifests are approved.
+5. Verify each immutable receipt-manager constructor config and every collector role on-chain.
+6. No post-deploy receipt-manager role handoff exists because the manager has no roles.
+7. Static vaults are not part of this launch. `NARAIndexFeeCollectorV2` does not implement
+   `setAllowedVault`, `redeemIndexFeeShares`, `REDEEMER_ROLE`, or `VAULT_MANAGER_ROLE`.
+   Do not use the superseded V1 static-vault instructions with V2.
 ```
 
 ## Allowed adapters on Base (V1 locked set)
@@ -221,17 +221,9 @@ Then:
 The receipt manager does not mint fee shares. It sends real fee tokens directly
 to the fee collector.
 
-## Static-vault fee path
+## Static-vault fee path — not supported by the canonical V2 collector
 
-This applies only to `CategoryIndexVaultV1`:
-
-```text
-1. Every static basket vault sets feeRecipient = NARAIndexFeeCollectorV2.
-2. Mint and redeem fees are paid as newly minted basket shares.
-3. FeeCollector holds basket shares.
-4. A REDEEMER_ROLE keeper calls redeemIndexFeeShares(vault, shares, minAmountsOut) for an allowed vault.
-5. FeeCollector receives underlying basket assets.
-6. A SWAPPER_ROLE keeper calls executeFeeSwap() through an allowed executor and selector to convert assets to WETH or NARA.
-7. If WETH: a SWAPPER_ROLE keeper calls unwrapWethAndNotifyEth(amount).
-8. If NARA: a SWAPPER_ROLE keeper calls depositNaraRewards(amount).
-```
+The old static-vault flow depended on V1-only vault allowlisting and redemption
+methods. Those methods do not exist in `NARAIndexFeeCollectorV2`. Static vaults
+are outside the current launch and must not be wired to V2. Supporting them
+later requires a separately designed, reviewed, and tested collector path.

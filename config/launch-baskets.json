@@ -64,15 +64,11 @@
         "everyAssetNotBlacklistable": true,
         "everyAssetNotPausable": true,
         "everyAssetSourceVerifiedOnBasescan": true,
-        "v4CoreDeployedAndStable48h": true,
-        "feeCollectorAdminIsSafeWithTimelock": true
+        "v4CoreDeployedAndStable48h": "pending evidence",
+        "naraPoolInitializedLiquidAndSmokeTested": "pending evidence",
+        "feeCollectorAdminIsSafeWithTimelock": "pending verification"
       },
-      "deployed": {
-        "manager": "<filled after deploy>",
-        "deployedAt": "<filled after deploy>",
-        "deployedBlock": "<filled after deploy>",
-        "basescanUrl": "<filled after deploy>"
-      }
+      "deployed": null
     },
     {
       "key": "ai",
@@ -154,14 +150,12 @@
     }
   ],
   "launchOrder": [
-    "v4 core deploy + 48h soak",
-    "Deploy full five-adapter basket set",
-    "Deploy NARAIndexFeeCollectorV2 with reviewed Safe/cold-wallet admin",
-    "Set allowed selectors (exactInputSingle, exactInput)",
-    "Deploy CORE basket first",
-    "Hand off fee collector admin to Safe + renounce deployer roles",
-    "Verify Safe admin via Basescan",
-    "Run an exact Base-mainnet fork simulation before broadcast",
+    "Confirm the existing v4 core and initialized NARA pool have completed a documented 48h soak",
+    "Run the complete DeployMainnetReady transaction sequence on an exact Base-mainnet fork",
+    "Verify every executor and selector before the irreversible fee-collector allowlist freeze",
+    "Review the single broadcast sequence: five adapters, V2 collector, selectors, allowlist freeze, CORE manager, Safe handoff",
+    "Broadcast only with a reviewed contract Safe/timelock ADMIN; an EOA is rejected",
+    "Verify manager, collector roles, frozen allowlist, adapters, and Safe admin on Basescan",
     "Smoke test buy/sell/withdrawUnderlying on pilot basket",
     "If clean: deploy CULTURE + FINANCE baskets",
     "AI basket deploys only if route/depth proof passes on deploy day"

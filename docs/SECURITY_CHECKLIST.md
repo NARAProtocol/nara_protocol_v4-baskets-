@@ -161,9 +161,8 @@ unexpected stuck tokens can be swept only by admin.
 
 ```text
 No user deposits.
-Only protocol-earned fee shares or receipt-manager fee tokens.
-Only REDEEMER_ROLE can redeem fee shares.
-Fee vault must be allowed before fee share redemption.
+Only receipt-manager fee tokens in the current V2 launch.
+V2 has no REDEEMER_ROLE, vault allowlist, or fee-share redemption path.
 Only SWAPPER_ROLE can execute fee swaps.
 Only SWAPPER_ROLE can push NARA/WETH/native ETH rewards into the engine.
 Executor manager can revoke unsafe fee executors.
@@ -201,8 +200,8 @@ wrapped assets with unknown bridge risk
 ~/.foundry/bin/forge test --root nara-category-baskets-v1 --fuzz-runs 1000
 slither .
 manual audit
-external audit
-Base Sepolia deployment
+documented internal multi-agent security review (no independent audit is claimed)
+exact Base-mainnet fork deployment rehearsal
 small capped mainnet pilot
 ```
 

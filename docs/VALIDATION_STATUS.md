@@ -1,6 +1,10 @@
 # Validation Status
 
-Last validated: 2026-06-03
+Last validated: 2026-06-03 (historical baseline; current launch config not yet
+fully revalidated)
+
+No independent audit is claimed. Current assurance is repository tests, fork
+verification, and documented internal multi-agent review.
 
 ## Local Tooling
 
@@ -124,4 +128,4 @@ npm run build           # pass
 `npm run build` emits third-party Rolldown pure-annotation warnings from wallet
 dependencies plus a chunk-size warning, but exits successfully.
 
-External audit remains pending.
+Independent review has not been performed and is not represented as complete.
