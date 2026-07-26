@@ -27,8 +27,8 @@ interface IUniversalRouter {
 /// @dev Immutable: no admin, no upgrade path. The Universal Router integration keeps the
 ///      dependency surface to the minimal interfaces declared above (no v4-core import).
 ///
-///      `data` encodes the target v4 PoolKey parameters as `(uint24 fee, int24 tickSpacing,
-///      address hooks)`.
+///      Canonical PoolKey parameters are immutable constructor inputs. Dynamic
+///      route data is rejected so required-NARA flow cannot select another pool.
 ///
 ///      Exact-input semantics: pulls `amountIn` from the caller (the manager), executes the
 ///      swap, and forwards the output to the manager. The manager independently verifies the
@@ -66,6 +66,9 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
 
     IUniversalRouter public immutable router;
     IPermit2 public immutable permit2;
+    uint24 public immutable canonicalFee;
+    int24 public immutable canonicalTickSpacing;
+    address public immutable canonicalHooks;
 
     error ZeroAddress();
     error ZeroAmount();
@@ -75,10 +78,19 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
     error OutputTooLow(uint256 received, uint256 minimum);
     error InputNotFullyConsumed(uint256 residual);
 
-    constructor(address router_, address permit2_) {
-        if (router_ == address(0) || permit2_ == address(0)) revert ZeroAddress();
+    constructor(
+        address router_,
+        address permit2_,
+        uint24 canonicalFee_,
+        int24 canonicalTickSpacing_,
+        address canonicalHooks_
+    ) {
+        if (router_ == address(0) || permit2_ == address(0) || canonicalHooks_ == address(0)) revert ZeroAddress();
         router = IUniversalRouter(router_);
         permit2 = IPermit2(permit2_);
+        canonicalFee = canonicalFee_;
+        canonicalTickSpacing = canonicalTickSpacing_;
+        canonicalHooks = canonicalHooks_;
     }
 
     /// @inheritdoc INARABasketSwapAdapterV1
@@ -97,8 +109,7 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
         uint128 minAmountOut128 = minAmountOut.toUint128();
 
         // data = abi.encode(uint24 fee, int24 tickSpacing, address hooks) → exactly 3 words.
-        if (data.length != 96) revert DataLengthInvalid();
-        (uint24 fee, int24 tickSpacing, address hooks) = abi.decode(data, (uint24, int24, address));
+        if (data.length != 0) revert DataLengthInvalid();
 
         // Pull the exact input the manager approved.
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -109,7 +120,15 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
         permit2.approve(tokenIn, address(router), amountIn128, uint48(block.timestamp + 60));
 
         uint256 inBeforeSwap = IERC20(tokenIn).balanceOf(address(this));
-        uint256 received = _executeV4Swap(tokenIn, tokenOut, amountIn128, minAmountOut128, fee, tickSpacing, hooks);
+        uint256 received = _executeV4Swap(
+            tokenIn,
+            tokenOut,
+            amountIn128,
+            minAmountOut128,
+            canonicalFee,
+            canonicalTickSpacing,
+            canonicalHooks
+        );
         if (received < minAmountOut) revert OutputTooLow(received, minAmountOut);
         uint256 inAfterSwap = IERC20(tokenIn).balanceOf(address(this));
         if (inBeforeSwap - inAfterSwap != amountIn) revert InputNotFullyConsumed(inAfterSwap);

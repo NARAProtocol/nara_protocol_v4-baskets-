@@ -130,7 +130,7 @@ contract UniswapV4BasketAdapterV1Test is Test {
         nara = new V4MockERC20("NARA", "NARA", 18);
         permit2 = new MockPermit2();
         router = new MockUniversalRouter(permit2);
-        adapter = new UniswapV4BasketAdapterV1(address(router), address(permit2));
+        adapter = new UniswapV4BasketAdapterV1(address(router), address(permit2), FEE, TICK_SPACING, hook);
 
         router.setRate(2e18); // 2 NARA out per 1 USDC-unit in (mock units)
         nara.mint(address(router), 1_000_000 ether);
@@ -140,7 +140,7 @@ contract UniswapV4BasketAdapterV1Test is Test {
     }
 
     function _data() internal view returns (bytes memory) {
-        return abi.encode(FEE, TICK_SPACING, hook);
+        return bytes("");
     }
 
     function testSwapPullsInputForwardsOutputAndReportsExactDeltas() public {
@@ -241,7 +241,7 @@ contract UniswapV4BasketAdapterV1Test is Test {
         vm.startPrank(manager);
         usdc.approve(address(adapter), 100 ether);
         vm.expectRevert(UniswapV4BasketAdapterV1.DataLengthInvalid.selector);
-        adapter.swapExactInput(address(usdc), address(nara), 100 ether, 1, abi.encode(FEE)); // too short
+        adapter.swapExactInput(address(usdc), address(nara), 100 ether, 1, abi.encode(FEE));
         vm.stopPrank();
     }
 
@@ -286,7 +286,7 @@ contract UniswapV4BasketAdapterV1Test is Test {
         address hk = vm.envAddress("V4_HOOK");
         address whale = vm.envAddress("V4_WHALE");
 
-        UniswapV4BasketAdapterV1 fa = new UniswapV4BasketAdapterV1(ur, p2);
+        UniswapV4BasketAdapterV1 fa = new UniswapV4BasketAdapterV1(ur, p2, fee, tickSpacing, hk);
 
         // Fund this contract (acting as the manager) with tokenIn from a whale.
         vm.prank(whale);
@@ -294,8 +294,7 @@ contract UniswapV4BasketAdapterV1Test is Test {
         IERC20(tokenIn).approve(address(fa), amountIn);
 
         uint256 outBefore = IERC20(tokenOut).balanceOf(address(this));
-        bytes memory data = abi.encode(fee, tickSpacing, hk);
-        (uint256 used, uint256 out) = fa.swapExactInput(tokenIn, tokenOut, amountIn, 1, data);
+        (uint256 used, uint256 out) = fa.swapExactInput(tokenIn, tokenOut, amountIn, 1, bytes(""));
 
         assertEq(used, amountIn, "fork: input fully consumed");
         assertGt(out, 0, "fork: received output");

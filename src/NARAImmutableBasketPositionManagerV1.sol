@@ -38,6 +38,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
     error EmptyAdapters();
     error LengthMismatch();
     error ZeroAddress();
+    error NotAContract(address target);
     error ZeroAmount();
     error ZeroCategoryId();
     error DuplicateAsset();
@@ -263,6 +264,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
         if (requiredAsset_ == address(0) || config.feeRecipient == address(0) || config.feeRecipient == address(this)) {
             revert ZeroAddress();
         }
+        if (requiredAsset_.code.length == 0) revert NotAContract(requiredAsset_);
 
         if (config.categoryId == bytes32(0)) revert ZeroCategoryId();
 
@@ -312,6 +314,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             address asset = config.assets[i];
 
             if (asset == address(0)) revert ZeroAddress();
+            if (asset.code.length == 0) revert NotAContract(asset);
             if (config.weightsBps[i] == 0) revert BadWeights();
             if (_assetIndexPlusOne[asset] != 0) revert DuplicateAsset();
 
@@ -337,6 +340,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             address token = config.paymentTokens[i];
 
             if (token == address(0)) revert ZeroAddress();
+            if (token.code.length == 0) revert NotAContract(token);
             if (paymentTokenAllowed[token]) revert DuplicatePaymentToken();
 
             paymentTokenAllowed[token] = true;
@@ -350,6 +354,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             address adapter = config.adapters[i];
 
             if (adapter == address(0)) revert ZeroAddress();
+            if (adapter.code.length == 0) revert NotAContract(adapter);
             if (adapterAllowed[adapter]) revert DuplicateAdapter();
 
             adapterAllowed[adapter] = true;

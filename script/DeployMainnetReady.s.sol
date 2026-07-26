@@ -91,19 +91,25 @@ contract DeployMainnetReady is Script {
         address pancakeRouter = vm.envOr("PANCAKE_V3_ROUTER", address(0x1b81D678ffb9C0263b24A97847620C99d213eB14));
         address universalRouter = vm.envOr("V4_UNIVERSAL_ROUTER", address(0x6fF5693b99212Da76ad316178A184AB56D299b43));
         address permit2 = vm.envOr("V4_PERMIT2", address(0x000000000022D473030F116dDEE9F6B43aC78BA3));
+        uint24 v4Fee = uint24(vm.envUint("NARA_V4_POOL_FEE"));
+        int24 v4TickSpacing = int24(uint24(vm.envUint("NARA_V4_POOL_TICK_SPACING")));
+        address v4Hook = vm.envAddress("NARA_V4_LIQUIDITY_GROWTH_HOOK");
         _requireCode("UNISWAP_V3_ROUTER02", router02);
         _requireCode("AERODROME_ROUTER", aeroRouter);
         _requireCode("AERODROME_SLIPSTREAM_ROUTER", slipstreamRouter);
         _requireCode("PANCAKE_V3_ROUTER", pancakeRouter);
         _requireCode("V4_UNIVERSAL_ROUTER", universalRouter);
         _requireCode("V4_PERMIT2", permit2);
+        _requireCode("NARA_V4_LIQUIDITY_GROWTH_HOOK", v4Hook);
 
         adapters = new address[](5);
         adapters[0] = address(new UniswapV3BasketAdapterV1(router02));
         adapters[1] = address(new AerodromeBasketAdapterV1(aeroRouter, aeroFactory));
         adapters[2] = address(new AerodromeSlipstreamBasketAdapterV1(slipstreamRouter));
         adapters[3] = address(new PancakeV3BasketAdapterV1(pancakeRouter));
-        adapters[4] = address(new UniswapV4BasketAdapterV1(universalRouter, permit2));
+        adapters[4] = address(new UniswapV4BasketAdapterV1(
+            universalRouter, permit2, v4Fee, v4TickSpacing, v4Hook
+        ));
     }
 
     function _deployFeeCollector(address deployer) internal returns (NARAIndexFeeCollectorV2 feeCollector) {

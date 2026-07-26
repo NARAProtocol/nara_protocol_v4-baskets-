@@ -59,7 +59,9 @@ contract DeployForkLocal is Script {
         AerodromeBasketAdapterV1 aero = new AerodromeBasketAdapterV1(AERO_ROUTER, AERO_FACTORY);
         AerodromeSlipstreamBasketAdapterV1 slipstream = new AerodromeSlipstreamBasketAdapterV1(SLIPSTREAM_ROUTER);
         PancakeV3BasketAdapterV1 pancake = new PancakeV3BasketAdapterV1(PANCAKE_V3_ROUTER);
-        UniswapV4BasketAdapterV1 v4 = new UniswapV4BasketAdapterV1(UNIVERSAL_ROUTER, PERMIT2);
+        // Local stand-in only; production requires the exact deployed NARA hook key.
+        UniswapV4BasketAdapterV1 v4 =
+            new UniswapV4BasketAdapterV1(UNIVERSAL_ROUTER, PERMIT2, 3000, 60, address(0x1));
 
         // Full adapter set: every basket can route across top Base venues plus NARA's v4 pool.
         address[] memory adapters = new address[](5);
