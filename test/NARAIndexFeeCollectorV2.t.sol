@@ -1,359 +1,493 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.34;
+pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {NARAIndexFeeCollectorV2} from "../src/NARAIndexFeeCollectorV2.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract MockEngine {
-    event NotifyEth(uint256 amount);
-    event DepositRewards(uint256 amount);
+import {NARAIndexFeeCollectorV2, ISwapRouter02V2} from "../src/NARAIndexFeeCollectorV2.sol";
 
-    address public naraToken;
+contract MockTokenCollectorV2 is ERC20 {
+    uint8 private immutable _tokenDecimals;
 
-    function setNara(address token) external { naraToken = token; }
-
-    function notifyEthRewards() external payable {
-        emit NotifyEth(msg.value);
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
+        _tokenDecimals = decimals_;
     }
 
-    // Pull NARA from caller (mirrors real NARAEngineV2.depositRewards behaviour)
-    function depositRewards(uint256 amount) external {
-        if (naraToken != address(0)) {
-            IERC20(naraToken).transferFrom(msg.sender, address(this), amount);
-        }
-        emit DepositRewards(amount);
+    function decimals() public view override returns (uint8) {
+        return _tokenDecimals;
     }
 
-    receive() external payable {}
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
-contract MockWeth is ERC20 {
+contract MockWethCollectorV2 is ERC20 {
     constructor() ERC20("Wrapped Ether", "WETH") {}
 
-    function deposit() external payable {
-        _mint(msg.sender, msg.value);
+    receive() external payable {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
     }
 
     function withdraw(uint256 amount) external {
         _burn(msg.sender, amount);
-        (bool ok,) = msg.sender.call{value: amount}("");
-        require(ok, "weth withdraw failed");
-    }
-
-    function mintFor(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-
-    receive() external payable {}
-}
-
-contract MockNara is ERC20 {
-    constructor() ERC20("NARA", "NARA") {}
-
-    function mintFor(address to, uint256 amount) external {
-        _mint(to, amount);
+        (bool ok,) = payable(msg.sender).call{value: amount}("");
+        require(ok, "ETH_SEND");
     }
 }
 
-contract MockExecutor {
-    address public lastIn;
-    address public lastOut;
-    uint256 public lastAmountIn;
-    bool public revertOnNext;
+contract MockEngineCollectorV2 {
+    IERC20 public immutable nara;
+    uint256 public naraReceived;
+    uint256 public ethReceived;
+    bool public spendLess;
 
-    function swap(address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, address recipient) external {
-        if (revertOnNext) {
-            revertOnNext = false;
-            revert("simulated executor revert");
-        }
-        lastIn = tokenIn;
-        lastOut = tokenOut;
-        lastAmountIn = amountIn;
-        IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
-        if (amountOut > 0) {
-            require(IERC20(tokenOut).transfer(recipient, amountOut), "out transfer fail");
-        }
+    constructor(IERC20 nara_) {
+        nara = nara_;
     }
 
-    function setRevert(bool v) external {
-        revertOnNext = v;
+    function NARA() external view returns (address) {
+        return address(nara);
     }
-}
 
-contract MockToken is ERC20 {
-    constructor(string memory n, string memory s) ERC20(n, s) {}
-    function mintFor(address to, uint256 amount) external {
-        _mint(to, amount);
+    function setSpendLess(bool spendLess_) external {
+        spendLess = spendLess_;
+    }
+
+    function depositRewards(uint256 amount) external {
+        uint256 amountToSpend = spendLess ? amount - 1 : amount;
+        nara.transferFrom(msg.sender, address(this), amountToSpend);
+        naraReceived += amountToSpend;
+    }
+
+    function notifyEthRewards() external payable {
+        ethReceived += msg.value;
     }
 }
 
-/// @notice Tests the V2 hardening: no sweepToken, no sweepETH, swap path constrained.
+contract MockAggregatorCollectorV2 {
+    uint8 public immutable decimals;
+    int256 public answer;
+    uint256 public updatedAt;
+    uint80 public roundId = 1;
+    uint80 public answeredInRound = 1;
+
+    constructor(uint8 decimals_, int256 answer_) {
+        decimals = decimals_;
+        answer = answer_;
+        updatedAt = block.timestamp;
+    }
+
+    function setAnswer(int256 answer_) external {
+        answer = answer_;
+        updatedAt = block.timestamp;
+        roundId++;
+        answeredInRound = roundId;
+    }
+
+    function setRound(int256 answer_, uint256 updatedAt_, uint80 roundId_, uint80 answeredInRound_) external {
+        answer = answer_;
+        updatedAt = updatedAt_;
+        roundId = roundId_;
+        answeredInRound = answeredInRound_;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (roundId, answer, updatedAt, updatedAt, answeredInRound);
+    }
+}
+
+contract MockRouterCollectorV2 {
+    MockWethCollectorV2 public immutable weth;
+    uint256 public outputAmount;
+    bool public spendLess;
+
+    constructor(MockWethCollectorV2 weth_) {
+        weth = weth_;
+    }
+
+    function setOutputAmount(uint256 outputAmount_) external {
+        outputAmount = outputAmount_;
+    }
+
+    function setSpendLess(bool spendLess_) external {
+        spendLess = spendLess_;
+    }
+
+    function exactInputSingle(ISwapRouter02V2.ExactInputSingleParams calldata params)
+        external
+        payable
+        returns (uint256 amountOut)
+    {
+        uint256 amountToSpend = spendLess ? params.amountIn - 1 : params.amountIn;
+        IERC20(params.tokenIn).transferFrom(msg.sender, address(this), amountToSpend);
+        weth.mint(params.recipient, outputAmount);
+        return outputAmount;
+    }
+}
+
 contract NARAIndexFeeCollectorV2Test is Test {
-    NARAIndexFeeCollectorV2 collector;
-    MockEngine engine;
-    MockNara nara;
-    MockWeth weth;
-    MockExecutor executor;
-    MockToken usdc;
+    address internal constant ADMIN = address(0xA11);
+    address internal constant SWAPPER = address(0xB22);
+    address internal constant ROUTE_MANAGER = address(0xC33);
+    address internal constant ATTACKER = address(0xD44);
+    address internal constant BASE_SEQUENCER_UPTIME_FEED = 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433;
 
-    address admin = address(0xA11CE);
-    address swapper;
-    address attacker = address(0xBAD);
-
-    bytes4 constant SWAP_SELECTOR = bytes4(keccak256("swap(address,address,uint256,uint256,address)"));
+    MockTokenCollectorV2 internal nara;
+    MockTokenCollectorV2 internal usdc;
+    MockWethCollectorV2 internal weth;
+    MockEngineCollectorV2 internal engine;
+    MockAggregatorCollectorV2 internal usdcFeed;
+    MockAggregatorCollectorV2 internal ethFeed;
+    MockRouterCollectorV2 internal router;
+    NARAIndexFeeCollectorV2 internal collector;
 
     function setUp() public {
-        engine = new MockEngine();
-        nara = new MockNara();
-        weth = new MockWeth();
-        usdc = new MockToken("USD Coin", "USDC");
-        executor = new MockExecutor();
-        engine.setNara(address(nara)); // wire mock so depositRewards actually pulls tokens
+        vm.warp(2 hours + 1);
+        vm.etch(ADMIN, hex"00");
+        vm.etch(ROUTE_MANAGER, hex"00");
+        _mockSequencer(0, 1);
+        nara = new MockTokenCollectorV2("NARA", "NARA", 18);
+        usdc = new MockTokenCollectorV2("USD Coin", "USDC", 6);
+        weth = new MockWethCollectorV2();
+        engine = new MockEngineCollectorV2(IERC20(address(nara)));
+        usdcFeed = new MockAggregatorCollectorV2(8, 1e8);
+        ethFeed = new MockAggregatorCollectorV2(8, 2_000e8);
+        router = new MockRouterCollectorV2(weth);
+        vm.deal(address(weth), 100 ether);
 
-        address[] memory allowedExecutors = new address[](1);
-        allowedExecutors[0] = address(executor);
-
-        collector =
-            new NARAIndexFeeCollectorV2(address(engine), address(nara), address(weth), admin, allowedExecutors);
-
-        vm.prank(admin);
-        collector.setAllowedSelector(address(executor), SWAP_SELECTOR, true);
-
-        swapper = admin;
+        collector = _deploy(address(router), address(usdcFeed), address(ethFeed));
     }
 
-    // === No sweep functions exist ===
-
-    function testCollectorHasNoSweepToken() public {
-        // Sanity: confirm the function signature is not callable.
-        // We rely on the absence of the function in the V2 contract.
-        // This test passes by simply compiling — if a sweepToken were added later, this
-        // test would still pass, so the real defense is the audit checklist.
-        (bool ok,) = address(collector).call(abi.encodeWithSignature("sweepToken(address,address,uint256)", address(usdc), attacker, 1));
-        assertFalse(ok, "sweepToken must not exist on V2");
+    function _mockSequencer(int256 answer, uint256 startedAt) internal {
+        vm.mockCall(
+            BASE_SEQUENCER_UPTIME_FEED,
+            abi.encodeWithSelector(bytes4(keccak256("latestRoundData()"))),
+            abi.encode(uint80(1), answer, startedAt, block.timestamp, uint80(1))
+        );
     }
 
-    function testCollectorHasNoSweepETH() public {
-        (bool ok,) = address(collector).call(abi.encodeWithSignature("sweepETH(address,uint256)", attacker, 1));
-        assertFalse(ok, "sweepETH must not exist on V2");
-    }
-
-    // === Constraint: swap output must be NARA or WETH ===
-
-    function testSwapOnlyOutputsNaraOrWeth() public {
-        usdc.mintFor(address(collector), 1_000e18);
-
-        NARAIndexFeeCollectorV2.SwapCall memory call = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(executor),
-            tokenIn: address(usdc),
-            tokenOut: address(usdc),
-            amountIn: 100e18,
-            minAmountOut: 1,
-            data: abi.encodeWithSelector(SWAP_SELECTOR, address(usdc), address(usdc), 100e18, 1, address(collector))
+    function _route(address router_, address usdcFeed_, address ethFeed_)
+        internal
+        pure
+        returns (NARAIndexFeeCollectorV2.RouteConfig memory)
+    {
+        return NARAIndexFeeCollectorV2.RouteConfig({
+            router: router_, usdcUsdFeed: usdcFeed_, ethUsdFeed: ethFeed_, poolFee: 500
         });
-
-        vm.prank(admin);
-        vm.expectRevert(NARAIndexFeeCollectorV2.InvalidRewardOutput.selector);
-        collector.executeFeeSwap(call);
     }
 
-    function testSwapAcceptsWethAsOutput() public {
-        usdc.mintFor(address(collector), 1_000e18);
-        weth.mintFor(address(executor), 1e18);
-
-        NARAIndexFeeCollectorV2.SwapCall memory call = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(executor),
-            tokenIn: address(usdc),
-            tokenOut: address(weth),
-            amountIn: 100e18,
-            minAmountOut: 1e17,
-            data: abi.encodeWithSelector(SWAP_SELECTOR, address(usdc), address(weth), 100e18, 5e17, address(collector))
-        });
-
-        vm.prank(admin);
-        collector.executeFeeSwap(call);
-        assertEq(weth.balanceOf(address(collector)), 5e17);
+    function _deploy(address router_, address usdcFeed_, address ethFeed_) internal returns (NARAIndexFeeCollectorV2) {
+        return new NARAIndexFeeCollectorV2(
+            address(engine),
+            address(nara),
+            address(usdc),
+            address(weth),
+            ADMIN,
+            SWAPPER,
+            ROUTE_MANAGER,
+            _route(router_, usdcFeed_, ethFeed_),
+            1 hours,
+            100
+        );
     }
 
-    function testSwapAcceptsNaraAsOutput() public {
-        usdc.mintFor(address(collector), 1_000e18);
-        nara.mintFor(address(executor), 1_000e18);
-
-        NARAIndexFeeCollectorV2.SwapCall memory call = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(executor),
-            tokenIn: address(usdc),
-            tokenOut: address(nara),
-            amountIn: 100e18,
-            minAmountOut: 1,
-            data: abi.encodeWithSelector(SWAP_SELECTOR, address(usdc), address(nara), 100e18, 500e18, address(collector))
-        });
-
-        vm.prank(admin);
-        collector.executeFeeSwap(call);
-        assertEq(nara.balanceOf(address(collector)), 500e18);
+    function testRolesAreSeparatedAtConstruction() public view {
+        assertTrue(collector.hasRole(collector.DEFAULT_ADMIN_ROLE(), ADMIN));
+        assertTrue(collector.hasRole(collector.SWAPPER_ROLE(), SWAPPER));
+        assertTrue(collector.hasRole(collector.ROUTE_MANAGER_ROLE(), ROUTE_MANAGER));
+        assertFalse(collector.hasRole(collector.SWAPPER_ROLE(), ADMIN));
+        assertFalse(collector.hasRole(collector.ROUTE_MANAGER_ROLE(), SWAPPER));
     }
 
-    // === Selector allowlist ===
-
-    function testSwapRejectsUnallowedSelector() public {
-        usdc.mintFor(address(collector), 1_000e18);
-
-        bytes4 fakeSelector = bytes4(0xdeadbeef);
-        bytes memory data = abi.encodePacked(fakeSelector, abi.encode(address(usdc), address(weth), 100e18, 1, address(collector)));
-
-        NARAIndexFeeCollectorV2.SwapCall memory call = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(executor),
-            tokenIn: address(usdc),
-            tokenOut: address(weth),
-            amountIn: 100e18,
-            minAmountOut: 1,
-            data: data
-        });
-
-        vm.prank(admin);
-        vm.expectRevert(NARAIndexFeeCollectorV2.ExecutorNotAllowed.selector);
-        collector.executeFeeSwap(call);
+    function testConstructorRejectsCollapsedRoles() public {
+        vm.expectRevert(NARAIndexFeeCollectorV2.RolesMustDiffer.selector);
+        new NARAIndexFeeCollectorV2(
+            address(engine),
+            address(nara),
+            address(usdc),
+            address(weth),
+            ADMIN,
+            ADMIN,
+            ROUTE_MANAGER,
+            _route(address(router), address(usdcFeed), address(ethFeed)),
+            1 hours,
+            100
+        );
     }
 
-    function testSwapRejectsUnallowedExecutor() public {
-        MockExecutor rogue = new MockExecutor();
-        usdc.mintFor(address(collector), 1_000e18);
-
-        NARAIndexFeeCollectorV2.SwapCall memory call = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(rogue),
-            tokenIn: address(usdc),
-            tokenOut: address(weth),
-            amountIn: 100e18,
-            minAmountOut: 1,
-            data: abi.encodeWithSelector(SWAP_SELECTOR, address(usdc), address(weth), 100e18, 1, address(collector))
-        });
-
-        vm.prank(admin);
-        vm.expectRevert(NARAIndexFeeCollectorV2.ExecutorNotAllowed.selector);
-        collector.executeFeeSwap(call);
+    function testConstructorRequiresContractAdminAndRouteManager() public {
+        vm.expectRevert(abi.encodeWithSelector(NARAIndexFeeCollectorV2.NotAContract.selector, ATTACKER));
+        new NARAIndexFeeCollectorV2(
+            address(engine),
+            address(nara),
+            address(usdc),
+            address(weth),
+            ATTACKER,
+            SWAPPER,
+            ROUTE_MANAGER,
+            _route(address(router), address(usdcFeed), address(ethFeed)),
+            1 hours,
+            100
+        );
     }
 
-    // === Reward push ===
+    function testConstructorRejectsEngineBoundToDifferentNara() public {
+        MockTokenCollectorV2 otherNara = new MockTokenCollectorV2("Other", "OTHER", 18);
+        MockEngineCollectorV2 wrongEngine = new MockEngineCollectorV2(IERC20(address(otherNara)));
+
+        vm.expectRevert(NARAIndexFeeCollectorV2.InvalidConfig.selector);
+        new NARAIndexFeeCollectorV2(
+            address(wrongEngine),
+            address(nara),
+            address(usdc),
+            address(weth),
+            ADMIN,
+            SWAPPER,
+            ROUTE_MANAGER,
+            _route(address(router), address(usdcFeed), address(ethFeed)),
+            1 hours,
+            100
+        );
+    }
+
+    function testOracleMinimumUsesBothFeedsAndImmutableSlippage() public view {
+        uint256 minimumOut = collector.minimumWethOut(1_000e6);
+        assertEq(minimumOut, 0.495 ether);
+    }
+
+    function testConvertUsdcUsesOracleMinimumAndAtomicallyNotifiesEngine() public {
+        usdc.mint(address(collector), 1_000e6);
+        router.setOutputAmount(0.5 ether);
+
+        vm.prank(SWAPPER);
+        uint256 actualOut = collector.convertUsdcAndNotifyEth(1_000e6);
+
+        assertEq(actualOut, 0.5 ether);
+        assertEq(engine.ethReceived(), 0.5 ether);
+        assertEq(usdc.balanceOf(address(collector)), 0);
+        assertEq(weth.balanceOf(address(collector)), 0);
+        assertEq(usdc.allowance(address(collector), address(router)), 0);
+    }
+
+    function testCallerCannotChooseNearZeroMinimumOutput() public {
+        usdc.mint(address(collector), 1_000e6);
+        router.setOutputAmount(1);
+
+        vm.prank(SWAPPER);
+        vm.expectRevert(abi.encodeWithSelector(NARAIndexFeeCollectorV2.RouteOutputTooLow.selector, 0.495 ether, 1));
+        collector.convertUsdcAndNotifyEth(1_000e6);
+
+        assertEq(usdc.balanceOf(address(collector)), 1_000e6);
+        assertEq(engine.ethReceived(), 0);
+    }
+
+    function testConvertRejectsPartialInputConsumption() public {
+        usdc.mint(address(collector), 1_000e6);
+        router.setOutputAmount(0.5 ether);
+        router.setSpendLess(true);
+
+        vm.prank(SWAPPER);
+        vm.expectRevert(
+            abi.encodeWithSelector(NARAIndexFeeCollectorV2.RouteInputMismatch.selector, 1_000e6, 1_000e6 - 1)
+        );
+        collector.convertUsdcAndNotifyEth(1_000e6);
+    }
+
+    function testStaleOracleStopsBeforeApprovalOrSwap() public {
+        vm.warp(3 hours);
+        usdc.mint(address(collector), 1_000e6);
+        usdcFeed.setRound(1e8, block.timestamp - 2 hours, 2, 2);
+
+        vm.prank(SWAPPER);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NARAIndexFeeCollectorV2.OracleStale.selector, address(usdcFeed), block.timestamp - 2 hours
+            )
+        );
+        collector.convertUsdcAndNotifyEth(1_000e6);
+
+        assertEq(usdc.allowance(address(collector), address(router)), 0);
+        assertEq(usdc.balanceOf(address(collector)), 1_000e6);
+    }
+
+    function testInvalidOracleRoundStopsConversion() public {
+        usdcFeed.setRound(1e8, block.timestamp, 3, 2);
+        vm.expectRevert(abi.encodeWithSelector(NARAIndexFeeCollectorV2.OracleInvalid.selector, address(usdcFeed)));
+        collector.minimumWethOut(1_000e6);
+    }
+
+    function testUsdcPriceBoundsStopBadFeedConfiguration() public {
+        usdcFeed.setAnswer(50_000_000);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NARAIndexFeeCollectorV2.OraclePriceOutOfBounds.selector, address(usdcFeed), 0.5 ether
+            )
+        );
+        collector.minimumWethOut(1_000e6);
+    }
+
+    function testHonestEthPricesOutsideLegacyBandRemainConvertible() public {
+        ethFeed.setAnswer(50e8);
+        assertEq(collector.minimumWethOut(1_000e6), 19.8 ether);
+
+        ethFeed.setAnswer(200_000e8);
+        assertEq(collector.minimumWethOut(1_000e6), 0.00495 ether);
+    }
+
+    function testSequencerOutageAndRecoveryGracePeriodStopConversion() public {
+        _mockSequencer(1, block.timestamp);
+        vm.expectRevert(NARAIndexFeeCollectorV2.SequencerDown.selector);
+        collector.minimumWethOut(1_000e6);
+
+        _mockSequencer(0, block.timestamp);
+        vm.expectRevert(
+            abi.encodeWithSelector(NARAIndexFeeCollectorV2.SequencerGracePeriodNotElapsed.selector, block.timestamp)
+        );
+        collector.minimumWethOut(1_000e6);
+
+        vm.warp(block.timestamp + 1 hours + 1);
+        usdcFeed.setAnswer(1e8);
+        ethFeed.setAnswer(2_000e8);
+        assertEq(collector.minimumWethOut(1_000e6), 0.495 ether);
+    }
+
+    function testOnlySwapperCanConvertOrDeposit() public {
+        usdc.mint(address(collector), 1_000e6);
+        nara.mint(address(collector), 1 ether);
+
+        vm.prank(ATTACKER);
+        vm.expectRevert();
+        collector.convertUsdcAndNotifyEth(1_000e6);
+
+        vm.prank(ATTACKER);
+        vm.expectRevert();
+        collector.depositNaraRewards(1 ether);
+    }
 
     function testDepositNaraRewards() public {
-        nara.mintFor(address(collector), 1_000e18);
+        nara.mint(address(collector), 25 ether);
+        vm.prank(SWAPPER);
+        collector.depositNaraRewards(25 ether);
 
-        vm.prank(admin);
-        collector.depositNaraRewards(500e18);
-        assertEq(nara.balanceOf(address(engine)), 500e18);
+        assertEq(engine.naraReceived(), 25 ether);
+        assertEq(nara.balanceOf(address(collector)), 0);
+        assertEq(nara.allowance(address(collector), address(engine)), 0);
     }
 
-    function testUnwrapAndNotifyEth() public {
-        weth.mintFor(address(collector), 1e18);
-        // Fund mock weth with native eth so withdraw works
-        vm.deal(address(weth), 1e18);
+    function testDepositRejectsPartialEngineConsumption() public {
+        nara.mint(address(collector), 25 ether);
+        engine.setSpendLess(true);
 
-        vm.prank(admin);
-        collector.unwrapWethAndNotifyEth(1e18);
-        assertEq(address(engine).balance, 1e18);
+        vm.prank(SWAPPER);
+        vm.expectRevert(
+            abi.encodeWithSelector(NARAIndexFeeCollectorV2.EngineInputMismatch.selector, 25 ether, 25 ether - 1)
+        );
+        collector.depositNaraRewards(25 ether);
+
+        assertEq(nara.balanceOf(address(collector)), 25 ether);
+        assertEq(engine.naraReceived(), 0);
+        assertEq(nara.allowance(address(collector), address(engine)), 0);
+    }
+
+    function testUnwrapWethAndNotifyEth() public {
+        weth.mint(address(collector), 2 ether);
+        vm.prank(SWAPPER);
+        collector.unwrapWethAndNotifyEth(2 ether);
+
+        assertEq(engine.ethReceived(), 2 ether);
+        assertEq(weth.balanceOf(address(collector)), 0);
     }
 
     function testNotifyNativeEth() public {
-        vm.deal(address(collector), 2e18);
-
-        vm.prank(admin);
-        collector.notifyNativeEth(1e18);
-        assertEq(address(engine).balance, 1e18);
+        vm.deal(address(collector), 3 ether);
+        vm.prank(SWAPPER);
+        collector.notifyNativeEth(3 ether);
+        assertEq(engine.ethReceived(), 3 ether);
     }
 
-    // === Access control ===
+    function testRouteUpdateRequiresIndependentAdminApprovalAfterEta() public {
+        MockRouterCollectorV2 nextRouter = new MockRouterCollectorV2(weth);
+        NARAIndexFeeCollectorV2.RouteConfig memory next =
+            _route(address(nextRouter), address(usdcFeed), address(ethFeed));
 
-    function testAttackerCannotSwap() public {
-        usdc.mintFor(address(collector), 1_000e18);
-        weth.mintFor(address(executor), 1e18);
-
-        NARAIndexFeeCollectorV2.SwapCall memory call = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(executor),
-            tokenIn: address(usdc),
-            tokenOut: address(weth),
-            amountIn: 100e18,
-            minAmountOut: 1,
-            data: abi.encodeWithSelector(SWAP_SELECTOR, address(usdc), address(weth), 100e18, 1, address(collector))
-        });
-
-        vm.prank(attacker);
+        vm.prank(ATTACKER);
         vm.expectRevert();
-        collector.executeFeeSwap(call);
-    }
+        collector.proposeRoute(next);
 
-    function testAttackerCannotSetExecutor() public {
-        vm.prank(attacker);
+        vm.prank(ROUTE_MANAGER);
+        collector.proposeRoute(next);
+
+        uint48 eta = uint48(block.timestamp + collector.ROUTE_UPDATE_DELAY());
+        vm.prank(ADMIN);
+        vm.expectRevert(abi.encodeWithSelector(NARAIndexFeeCollectorV2.RouteUpdateNotReady.selector, eta));
+        collector.executeRoute();
+
+        vm.warp(block.timestamp + collector.ROUTE_UPDATE_DELAY());
+        vm.prank(ATTACKER);
         vm.expectRevert();
-        collector.setAllowedExecutor(attacker, true);
+        collector.executeRoute();
+
+        vm.prank(ADMIN);
+        collector.executeRoute();
+
+        (address activeRouter,,,) = collector.routeConfig();
+        assertEq(activeRouter, address(nextRouter));
     }
 
-    function testAllowlistCanBeFrozenAfterLaunchConfiguration() public {
-        vm.prank(admin);
-        collector.freezeAllowlist();
-        assertTrue(collector.allowlistFrozen());
+    function testRouteManagerCanCancelPendingMigration() public {
+        MockRouterCollectorV2 nextRouter = new MockRouterCollectorV2(weth);
+        vm.prank(ROUTE_MANAGER);
+        collector.proposeRoute(_route(address(nextRouter), address(usdcFeed), address(ethFeed)));
 
-        vm.startPrank(admin);
-        vm.expectRevert(NARAIndexFeeCollectorV2.AllowlistFrozen.selector);
-        collector.setAllowedExecutor(address(0xBEEF), true);
-        vm.expectRevert(NARAIndexFeeCollectorV2.AllowlistFrozen.selector);
-        collector.setAllowedSelector(address(executor), bytes4(0x12345678), true);
-        vm.stopPrank();
+        vm.prank(ROUTE_MANAGER);
+        collector.cancelRoute();
+
+        vm.warp(block.timestamp + collector.ROUTE_UPDATE_DELAY());
+        vm.prank(ADMIN);
+        vm.expectRevert(NARAIndexFeeCollectorV2.NoPendingRoute.selector);
+        collector.executeRoute();
     }
 
-    // === Stuck-token reality check ===
-    // If an arbitrary token arrives at the collector, the only path out is through a swap
-    // to NARA or WETH. There is no extraction path for arbitrary tokens. Test:
+    function testAdminGuardianCanCancelRouteManagerProposal() public {
+        MockRouterCollectorV2 nextRouter = new MockRouterCollectorV2(weth);
+        vm.prank(ROUTE_MANAGER);
+        collector.proposeRoute(_route(address(nextRouter), address(usdcFeed), address(ethFeed)));
 
-    function testArbitraryTokenCanOnlyLeaveViaSwapToNaraOrWeth() public {
-        MockToken random = new MockToken("RAND", "RND");
-        random.mintFor(address(collector), 1000e18);
+        vm.prank(ADMIN);
+        collector.cancelRoute();
 
-        // Attempt to extract directly: impossible (no sweep).
-        // Attempt swap with random as output: rejected.
-        NARAIndexFeeCollectorV2.SwapCall memory badCall = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(executor),
-            tokenIn: address(random),
-            tokenOut: address(random),
-            amountIn: 100e18,
-            minAmountOut: 1,
-            data: abi.encodeWithSelector(SWAP_SELECTOR, address(random), address(random), 100e18, 1, address(collector))
-        });
-        vm.prank(admin);
-        vm.expectRevert(NARAIndexFeeCollectorV2.InvalidRewardOutput.selector);
-        collector.executeFeeSwap(badCall);
-
-        // Legitimate exit path: swap to WETH.
-        weth.mintFor(address(executor), 1e18);
-        NARAIndexFeeCollectorV2.SwapCall memory goodCall = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(executor),
-            tokenIn: address(random),
-            tokenOut: address(weth),
-            amountIn: 100e18,
-            minAmountOut: 1,
-            data: abi.encodeWithSelector(SWAP_SELECTOR, address(random), address(weth), 100e18, 5e17, address(collector))
-        });
-        vm.prank(admin);
-        collector.executeFeeSwap(goodCall);
-        assertEq(weth.balanceOf(address(collector)), 5e17);
+        vm.warp(block.timestamp + collector.ROUTE_UPDATE_DELAY());
+        vm.prank(ADMIN);
+        vm.expectRevert(NARAIndexFeeCollectorV2.NoPendingRoute.selector);
+        collector.executeRoute();
     }
 
-    function testZeroInputSwapReverts() public {
-        usdc.mintFor(address(collector), 1_000e18);
-        // Executor consumes nothing
-        NARAIndexFeeCollectorV2.SwapCall memory call = NARAIndexFeeCollectorV2.SwapCall({
-            executor: address(executor),
-            tokenIn: address(usdc),
-            tokenOut: address(weth),
-            amountIn: 100e18,
-            minAmountOut: 1,
-            data: abi.encodeWithSelector(SWAP_SELECTOR, address(usdc), address(weth), 0, 0, address(collector))
-        });
-        vm.prank(admin);
-        vm.expectRevert();
-        collector.executeFeeSwap(call);
+    function testRevokingCompromisedProposerInvalidatesPendingRoute() public {
+        MockRouterCollectorV2 nextRouter = new MockRouterCollectorV2(weth);
+        vm.prank(ROUTE_MANAGER);
+        collector.proposeRoute(_route(address(nextRouter), address(usdcFeed), address(ethFeed)));
+
+        bytes32 routeManagerRole = collector.ROUTE_MANAGER_ROLE();
+        vm.prank(ADMIN);
+        collector.revokeRole(routeManagerRole, ROUTE_MANAGER);
+
+        vm.warp(block.timestamp + collector.ROUTE_UPDATE_DELAY());
+        vm.prank(ADMIN);
+        vm.expectRevert(
+            abi.encodeWithSelector(NARAIndexFeeCollectorV2.PendingRouteProposerRevoked.selector, ROUTE_MANAGER)
+        );
+        collector.executeRoute();
     }
 
-    receive() external payable {}
+    function testCollectorHasNoArbitraryTokenOrEthSweep() public {
+        (bool tokenSweepOk,) = address(collector)
+            .call(abi.encodeWithSignature("sweepToken(address,address,uint256)", address(usdc), ATTACKER, 1));
+        (bool ethSweepOk,) = address(collector).call(abi.encodeWithSignature("sweepETH(address,uint256)", ATTACKER, 1));
+        assertFalse(tokenSweepOk);
+        assertFalse(ethSweepOk);
+    }
 }

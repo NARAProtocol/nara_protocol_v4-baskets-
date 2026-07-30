@@ -1,6 +1,6 @@
 # Basket Deployment Manifests
 
-Last updated: 2026-07-26.
+Last updated: 2026-07-30.
 
 Status: no production basket manifest exists. No basket manager, V2 fee
 collector, or production adapter set is represented as deployed.
@@ -43,13 +43,14 @@ Each saved JSON object must contain:
 | `usdc` | EVM address string | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | `weth` | EVM address string | `0x4200000000000000000000000000000000000006` |
 | `feeCollector` | EVM address string | Deployed canonical V2 collector |
+| `feeCollectorCodeHash` | 32-byte hex string | Exact reviewed runtime code hash for that immutable deployment |
 | `adapters` | object | All five deployed adapter addresses |
 | `category` | string | Public name |
 | `basketName` | string | Public name |
 | `displayTier` | integer | Exact immutable constructor value; UI must not present it as suitability |
 | `assets` | EVM address array | Exact immutable asset order |
 | `weightsBps` | integer array | Exact immutable weights; total must equal `10_000` |
-| `paymentTokens` | EVM address array | Exact immutable payment-token order |
+| `paymentTokens` | EVM address array | Must equal `[Base USDC]` for Basket V1 |
 | `buyFeeBps` | integer | Exact immutable value |
 | `sellFeeBps` | integer | Exact immutable value |
 | `withdrawFeeBps` | integer | Exact immutable value |
@@ -59,6 +60,15 @@ Each saved JSON object must contain:
 | `minNaraWeightBps` | integer | Exact immutable value |
 | `minInputAmount` | decimal string | Positive raw payment-token-unit floor |
 | `configHash` | 32-byte hex string | On-chain manager `configHash()` |
+| `collectorAdmin` | EVM address string | Contract Safe/guardian; distinct from swapper and route manager |
+| `collectorSwapper` | EVM address string | Separate operational signer |
+| `collectorRouteManager` | EVM address string | Contract timelock; distinct from admin and swapper |
+| `collectorRouter` | EVM address string | Typed SwapRouter02 route |
+| `collectorUsdcUsdFeed` | EVM address string | Reviewed USDC/USD feed |
+| `collectorEthUsdFeed` | EVM address string | Reviewed ETH/USD feed |
+| `collectorPoolFee` | integer | Direct USDC/WETH pool fee |
+| `collectorMaxOracleAge` | integer | Immutable seconds |
+| `collectorMaxSlippageBps` | integer | Immutable basis points, at most 500 |
 
 Do not create a manifest before deployment. Do not insert guessed addresses,
 zero addresses, example hashes, or copied values from another basket.
@@ -82,19 +92,20 @@ For every manifest, record separately:
 Load verifier environment values directly from the saved manifest. Do not type
 or copy shortened addresses.
 
-Run from the workspace root:
+Run from this repository root:
 
 ```powershell
 & "$env:USERPROFILE\.foundry\bin\forge.exe" script `
-  nara-category-baskets-v1/script/VerifyDeployedBasket.s.sol:VerifyDeployedBasket `
-  --root nara-category-baskets-v1 `
+  script/VerifyDeployedBasket.s.sol:VerifyDeployedBasket `
   --rpc-url "$env:BASE_MAINNET_RPC_URL"
 ```
 
 The verifier environment must describe the same basket as the selected
 manifest. `VerifyDeployedBasket.s.sol` checks chain ID, manager configuration,
-assets, weights, payment tokens, adapters, fees, required NARA weight, minimum
-input, and configuration hash.
+assets, weights, payment tokens, adapters, zero launch fees, required NARA
+weight, minimum input, configuration hash, exact collector runtime code hash,
+collector immutable bindings, typed route, oracle parameters, and separated
+role holders.
 
 ## Frontend parity
 
@@ -121,8 +132,7 @@ VITE_UNISWAP_V4_QUOTER
 Run:
 
 ```powershell
-Set-Location apps/nara-baskets
-npm run check:manifest-env
+npm run check:manifest-env --prefix app
 ```
 
 If a manifest, on-chain manager, launch curation, or frontend variable
@@ -130,12 +140,14 @@ disagrees, the basket must remain in preview.
 
 ## Current launch constraints
 
-- `withdrawFeeBps` must equal the basket `sellFeeBps`.
+- `withdrawFeeBps` must be `0`.
 - `holdingFeeBps` must be `0`.
 - `referralShareBps` must be `0`.
 - `minInputAmount` must be a positive integer.
-- `ADMIN` must be a contract Safe/timelock; the deploy script rejects an EOA.
-- `EXECUTOR_0_SELECTOR` is configured before the V2 collector permanently
-  freezes its allowlist.
+- `ADMIN`, `SWAPPER`, and `ROUTE_MANAGER` must be distinct.
+- `ADMIN` and `ROUTE_MANAGER` must be contracts; the deploy script rejects
+  EOAs for those roles.
+- Collector route, feeds, pool fee, age bound, and slippage bound must match
+  the reviewed deployment evidence.
 - Static vaults are not part of the launch and cannot use the V2 collector's
   nonexistent V1 vault-redemption methods.

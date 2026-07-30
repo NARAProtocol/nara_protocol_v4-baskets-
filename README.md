@@ -2,307 +2,247 @@
 
 # NARA Category Baskets
 
-**One-click, on-chain category baskets on Base. Pay USDC, hold a self-custodied receipt NFT for the exact tokens, withdraw any time. Fees route to NARA stakers.**
+**Immutable, receipt-based category baskets for Base.**
 
-[![Solidity](https://img.shields.io/badge/Solidity-0.8.34-363636?logo=solidity)](https://soliditylang.org)
-[![Foundry](https://img.shields.io/badge/Built%20with-Foundry-FF6243)](https://book.getfoundry.sh/)
-[![Tests](https://img.shields.io/badge/tests-136%20passing-2ea44f)](#-build--test)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Status](https://img.shields.io/badge/status-pre--launch%20(not%20deployed)-orange)](#-status)
+[![Baskets CI](https://github.com/NARAProtocol/nara_protocol_v4_baskets/actions/workflows/ci.yml/badge.svg)](https://github.com/NARAProtocol/nara_protocol_v4_baskets/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/NARAProtocol/nara_protocol_v4_baskets/actions/workflows/codeql.yml/badge.svg)](https://github.com/NARAProtocol/nara_protocol_v4_baskets/actions/workflows/codeql.yml)
+[![Solidity 0.8.34](https://img.shields.io/badge/Solidity-0.8.34-363636?logo=solidity)](https://soliditylang.org)
+[![Foundry](https://img.shields.io/badge/Foundry-1.4.3-FF6243)](https://book.getfoundry.sh/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
 
----
+NARA Baskets lets a user choose a predefined category, pay USDC, and receive an
+ERC-721 receipt for the exact tokens acquired by an immutable basket manager.
+The manager contract holds those tokens against the receipt until the owner
+sells or withdraws them.
 
-## What is this?
+> [!WARNING]
+> **Pre-launch. Basket contracts are not deployed on Base mainnet and the app is
+> preview-only.** Do not use placeholder addresses, the current release-candidate
+> tags, or an unverified manifest for deployment or value-bearing activity.
 
-Most people don't want to research and buy ten tokens one by one. **NARA Baskets** lets a user pick a
-*narrative* — `CORE`, `AI`, `FINANCE`, `CULTURE` — pay once in USDC, and receive a single
-**ERC-721 receipt** representing the exact tokens bought for them. They can sell the whole basket back
-to USDC or NARA, or withdraw the underlying tokens directly, at any time.
+## Current status
 
-Every basket **must** include NARA. That's the design moat: **every basket buy is a NARA buy**, and
-every fee routes back to NARA stakers.
+| Surface | State |
+|---|---|
+| Immutable receipt manager | Implemented and tested |
+| Five exact-input swap adapters | Implemented and tested |
+| Canonical NARA v4 pool binding | Implemented and tested |
+| Oracle-bounded fee collector | Implemented and tested |
+| Basket app | Implemented; preview-only |
+| Base basket deployments | Not deployed |
+| Production manifests | Not available |
+| End-to-end candidate fork rehearsal | Required before deployment |
+| Independent audit | Not performed |
 
-```
-        USDC in  ──▶  category basket exposure out  ──▶  sell back to USDC / NARA
-                                   │
-                                   ▼
-                     fees route to NARA rewards (engine.depositRewards / notifyEthRewards)
-```
+The detailed evidence ledger is
+[`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md). Status words in this
+repository follow
+[`docs/REPOSITORY_MAINTENANCE.md`](docs/REPOSITORY_MAINTENANCE.md).
 
-It is deliberately **simple and immutable**: no owner, no pause, no upgrades, no admin sweep, no
-rebalancing, no oracles. You get exactly what you bought, and you can always get it back out.
+## Verified design
 
----
+- **One immutable manager per basket.** Assets, weights, payment tokens,
+  adapters, fees, required NARA allocation, and fee recipient are fixed at
+  construction.
+- **Receipt-based ownership.** The ERC-721 records the exact underlying token
+  amounts. Approval-based operators are disabled; only the literal receipt
+  owner can sell or withdraw.
+- **USDC-only Basket V1 entry.** ETH and WETH entry remain disabled until a
+  separately implemented and reviewed composite route exists.
+- **Canonical NARA route.** The required NARA adapter pins the fee, tick
+  spacing, and hook in constructor immutables and rejects caller-supplied pool
+  data.
+- **Exact-input accounting.** The manager and adapters verify actual input and
+  output balance deltas and enforce per-asset and total minimum output.
+- **DEX-independent withdrawal.** A receipt owner can request recorded
+  underlying tokens without a swap or keeper. A component token that blocks its
+  own transfers can still block that token; selected-asset withdrawal preserves
+  access to unaffected assets.
+- **Narrow fee conversion.** Launch configuration sends only USDC or NARA to the
+  collector. USDC conversion uses a typed USDC/WETH route with fresh price
+  feeds, bounded slippage, exact spend checks, and delayed route changes.
 
-## Table of contents
-
-- [Status](#-status)
-- [How it works](#-how-it-works)
-- [Architecture](#-architecture)
-- [Contracts](#-contracts)
-- [Fee model](#-fee-model)
-- [Design principles](#-design-principles)
-- [Repository layout](#-repository-layout)
-- [Build & test](#-build--test)
-- [Security](#-security)
-- [Deployment](#-deployment)
-- [Integration with NARA v4](#-integration-with-nara-v4)
-- [Documentation](#-documentation)
-- [License](#-license)
-
----
-
-## 🚦 Status
-
-**Pre-launch. No contracts are deployed to mainnet yet.** This repository is the audited-in-progress
-source. Addresses will be published in [`docs/DEPLOYMENT_MANIFEST.md`](docs/DEPLOYMENT_MANIFEST.md)
-only after a verified deployment.
-
-> **Launch dependency:** NARA's liquidity home is a **taxed Uniswap v4 pool**
-> (`NARALiquidityGrowthHook`). Production baskets **must** include `UniswapV4BasketAdapterV1` in the
-> immutable adapter set so the NARA slice routes through that pool. See
-> [`docs/NARA_INTEGRATION.md`](docs/NARA_INTEGRATION.md).
-
----
-
-## ⚙️ How it works
-
-![NARA Baskets — pick a narrative, pay USDC/WETH/ETH, receive a receipt NFT for the exact tokens, then sell back to USDC or withdraw the underlying. Every basket includes NARA; fees flow to NARA stakers. Immutable: no owner, no pause, no upgrades, no admin sweep, no rebalancing, no oracles.](docs/assets/how-it-works.png)
-
-| Step | What happens |
-|------|--------------|
-| **1. Buy** | User sends USDC. Approved swap adapters buy each basket asset at its target weight. |
-| **2. Receipt** | The manager mints an **ERC-721** recording the exact token amounts bought for that user. |
-| **3. Hold** | The position is the NFT. No staking, no rebalancing — the user owns precisely those tokens. |
-| **4. Exit** | Sell the whole receipt back to USDC or NARA through approved adapters, **or** withdraw the underlying tokens directly. |
-| **5. Fees → NARA** | Buy/sell/withdraw/holding/referral fees flow to the fee collector, which converts them and calls the NARA engine's reward functions. |
-
-Underlying withdrawal is **always available** — even if every adapter were paused at the source DEX,
-a holder can still pull their exact tokens out.
-
----
-
-## 🏗 Architecture
+## Architecture
 
 ```mermaid
-flowchart TD
-    U[User · USDC] -->|buy| M[NARAImmutableBasketPositionManagerV1<br/>one immutable manager per basket]
-    M -->|exact-input swaps| A{Approved adapters}
-    A --> UV3[Uniswap V3]
-    A --> UV4[Uniswap V4 · NARA taxed pool]
-    A --> AERO[Aerodrome AMM]
-    A --> SLIP[Aerodrome Slipstream]
-    A --> PCS[PancakeSwap V3]
+flowchart LR
+    U[User] -->|USDC + chosen basket| APP[Basket app]
+    APP -->|reviewed exact-input instructions| M[Immutable receipt manager]
+    M -->|NARA leg| V4[Canonical NARA/USDC v4 adapter]
+    M -->|other assets| DEX[Approved immutable adapters]
+    V4 --> POOL[NARA hooked v4 pool]
+    DEX --> VENUES[Uniswap v3 / Aerodrome / Slipstream / Pancake v3]
     M -->|ERC-721 receipt| U
-    M -->|buy / sell / withdraw / holding / referral fees| FC[NARAIndexFeeCollectorV2]
-    FC -->|depositRewards · notifyEthRewards| ENG[NARA v4 Engine]
-    ENG -->|ETH + NARA rewards| L[NARA stakers]
+    M -->|USDC or NARA fees| FC[Oracle-bounded fee collector]
+    FC -->|NARA or ETH rewards| E[NARA v4 engine]
+    U -->|sell or withdraw| M
 ```
 
-- **One manager per basket** — assets, weights, payment tokens, adapters, fees and `feeRecipient`
-  are fixed in the constructor and can never change.
-- **Adapters are thin and immutable** — each pulls exactly `amountIn`, returns the real balance
-  delta, and has no admin or upgrade path.
-- **The fee collector is the only role-gated piece** — keepers (REDEEMER / SWAPPER /
-  EXECUTOR_MANAGER) convert fees and push rewards through an allowlisted executor + explicit 4-byte
-  selector. It can route value to the engine but cannot touch user positions.
+The basket package does not modify NARA v4 core contracts. It integrates only
+through verified addresses and the engine reward interfaces documented in
+[`docs/NARA_INTEGRATION.md`](docs/NARA_INTEGRATION.md).
 
----
+## Canonical contracts
 
-## 📜 Contracts
+| Contract | Purpose |
+|---|---|
+| [`NARAImmutableBasketPositionManagerV1`](src/NARAImmutableBasketPositionManagerV1.sol) | Immutable basket configuration, exact accounting, receipt lifecycle, sell, and withdrawal |
+| [`NARAIndexFeeCollectorV2`](src/NARAIndexFeeCollectorV2.sol) | Typed USDC conversion, direct NARA deposit, role separation, oracle bounds, and delayed route migration |
+| [`UniswapV4BasketAdapterV1`](src/adapters/UniswapV4BasketAdapterV1.sol) | Required NARA slice through the immutable canonical hooked pool |
+| [`UniswapV3BasketAdapterV1`](src/adapters/UniswapV3BasketAdapterV1.sol) | Exact-input Uniswap v3 route |
+| [`AerodromeBasketAdapterV1`](src/adapters/AerodromeBasketAdapterV1.sol) | Exact-input Aerodrome AMM route |
+| [`AerodromeSlipstreamBasketAdapterV1`](src/adapters/AerodromeSlipstreamBasketAdapterV1.sol) | Exact-input Aerodrome Slipstream route |
+| [`PancakeV3BasketAdapterV1`](src/adapters/PancakeV3BasketAdapterV1.sol) | Exact-input PancakeSwap v3 route |
 
-### Canonical — deploy these
+`NARAIndexFeeCollectorV1` and `CategoryIndexSuiteV1` remain reference-only and
+are not part of the receipt-basket launch deployment.
 
-| Contract | Role |
-|----------|------|
-| [`NARAImmutableBasketPositionManagerV1`](src/NARAImmutableBasketPositionManagerV1.sol) | **The product.** One immutable manager per basket. ERC-721 receipt per position. No owner, roles, pause, sweep, rebalance, or mutable config. |
-| [`NARAIndexFeeCollectorV2`](src/NARAIndexFeeCollectorV2.sol) | **Canonical fee collector.** Converts basket fees and routes them to the NARA engine. Role-gated keeper with allowlisted executor + selector. |
-| [`adapters/UniswapV3BasketAdapterV1`](src/adapters/UniswapV3BasketAdapterV1.sol) | Exact-input swap adapter — Uniswap V3. |
-| [`adapters/UniswapV4BasketAdapterV1`](src/adapters/UniswapV4BasketAdapterV1.sol) | **Required for production** — routes the NARA slice through NARA's taxed v4 pool. |
-| [`adapters/AerodromeBasketAdapterV1`](src/adapters/AerodromeBasketAdapterV1.sol) | Exact-input swap adapter — Aerodrome AMM. |
-| [`adapters/AerodromeSlipstreamBasketAdapterV1`](src/adapters/AerodromeSlipstreamBasketAdapterV1.sol) | Exact-input swap adapter — Aerodrome Slipstream (CL). |
-| [`adapters/PancakeV3BasketAdapterV1`](src/adapters/PancakeV3BasketAdapterV1.sol) | Exact-input swap adapter — PancakeSwap V3. |
+## Repository layout
 
-### Reference only — do **not** deploy for production
-
-| Contract | Why it's here |
-|----------|---------------|
-| `src/NARABasketPositionManagerV1.sol` | Older **mutable** manager. Superseded by the Immutable manager. |
-| `src/NARAIndexFeeCollectorV1.sol` | Superseded by V2. |
-| `src/CategoryIndexSuiteV1.sol` | Separate **static pro-rata ERC-20 vault** module — *not* the one-click receipt product. |
-
----
-
-## 💸 Fee model
-
-Five fee surfaces, all **immutable and constructor-fixed**, all routed to the fee collector → NARA engine:
-
-| Surface | Charged on | Notes |
-|---------|-----------|-------|
-| **Buy** | input token | hard cap **100 bps (1%)** |
-| **Sell** | output token | hard cap **100 bps (1%)** |
-| **Withdraw** | underlying | for direct underlying exits |
-| **Holding** | position | time-based |
-| **Referral** | split | pull-based, lifetime split to referrer |
-
-Fees are configured per basket at deploy (hard cap **100 bps / 1%** per side) and shown before every
-confirmation. Every receipt basket must include NARA at or above `MIN_NARA_WEIGHT_BPS`.
-
----
-
-## 🧭 Design principles
-
-**In V1, by design:** immutable config · ERC-721 receipts (not fungible NAV shares) · approved
-adapters only · whole-basket sells · always-available underlying withdrawal · mandatory NARA
-allocation · per-asset slippage + deadline checks · exact-transfer accounting.
-
-**Intentionally _not_ in V1** (each needs separate design + audit): staking · lockups · auto-sell ·
-stop-losses · governance · multisig custody · upgradeable vaults · lending · leverage · rebalancing ·
-oracle-based mint/redeem · partial % sells · fungible ERC-20 shares · NAV/TWAP oracles.
-
----
-
-## 🗂 Repository layout
-
-```
-nara-category-baskets-v1/
-├── src/
-│   ├── NARAImmutableBasketPositionManagerV1.sol   # canonical product
-│   ├── NARAIndexFeeCollectorV2.sol                # canonical fee collector
-│   ├── adapters/                                  # 5 exact-input swap adapters
-│   └── …                                          # reference-only contracts
-├── test/                                          # Foundry tests (136 passing)
-├── script/
-│   ├── DeployMainnetReady.s.sol                   # canonical deploy
-│   └── VerifyDeployedBasket.s.sol                 # post-deploy verification
-├── docs/                                          # integration, flow, security, manifests
-├── foundry.toml                                   # solc 0.8.34 · cancun · via-ir
+```text
+.
+├── app/                         # preview-first React/Vite basket app
+├── config/launch-baskets.json   # contract/app composition parity source
+├── docs/                        # integration, flow, security, and deployment evidence
+├── script/                      # deployment and post-deployment verification
+├── scripts/                     # repository-wide verification
+├── src/                         # Foundry contracts
+├── test/                        # unit, fuzz, invariant, and Base fork tests
+├── foundry.toml
 └── README.md
 ```
 
----
+## Quick start
 
-## 🔨 Build & test
+Requirements:
 
-Requires [Foundry](https://book.getfoundry.sh/getting-started/installation).
+- Git
+- Foundry `1.4.3`
+- Node.js `22`
+- npm
 
-```bash
-# install dependencies (deps are not vendored)
-forge install foundry-rs/forge-std
-forge install OpenZeppelin/openzeppelin-contracts
+```powershell
+git clone https://github.com/NARAProtocol/nara_protocol_v4_baskets.git
+Set-Location nara_protocol_v4_baskets
+git submodule update --init --recursive
 
-# build
-forge build
+& "$env:USERPROFILE\.foundry\bin\forge.exe" build
+& "$env:USERPROFILE\.foundry\bin\forge.exe" test `
+  --no-match-path "test/*Fork*.t.sol" `
+  --no-match-contract NARAImmutableBasketPositionManagerV1InvariantTest
 
-# full non-fork suite (fast, no RPC) — 136 passing
-forge test --no-match-path "test/AerodromeBasketAdapterV1.t.sol"
-
-# everything, incl. fork tests (needs a Base RPC)
-forge test --fork-url "$BASE_MAINNET_RPC_URL"
-
-# CI profile (fuzz 1000 runs, invariant 256×64)
-FOUNDRY_PROFILE=ci forge test
+npm ci --prefix app
+npm run check --prefix app
 ```
 
-Toolchain: `solc 0.8.34`, `evm_version = cancun`, `via_ir = true`, optimizer `200` runs.
+No wallet, private key, or RPC endpoint is required for the deterministic
+contract and app gates.
 
----
+## Canonical verification
 
-## 🔐 Security
+On Windows:
 
-This package is built to remove trust surfaces rather than add them:
-
-- **No owner, no pause, no upgradeability, no admin sweep** on the receipt manager — once deployed, the
-  basket config is permanent.
-- **Underlying withdrawal is always available** — users can exit to their exact tokens unconditionally.
-- **Fee collector cannot touch positions** — it can only convert fees and push rewards, through an
-  allowlisted executor and an explicit 4-byte selector (no multicall/batch selectors).
-- **Adapters are immutable** and verified to move exactly the accounted balance deltas.
-
-The last fully recorded repository baseline is documented in
-[`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md). Do not infer current
-test or static-analysis status from older badges or prose. No independent audit
-is claimed. See [`SECURITY.md`](SECURITY.md) for scope and disclosure.
-
-> ⚠️ The immutable manager has **no post-deploy admin**. Get the constructor config right — it is
-> permanent.
-
----
-
-## 🚀 Deployment
-
-```bash
-forge script script/DeployMainnetReady.s.sol:DeployMainnetReady \
-  --rpc-url "$BASE_MAINNET_RPC_URL" --broadcast --verify
-
-forge script script/VerifyDeployedBasket.s.sol:VerifyDeployedBasket \
-  --rpc-url "$BASE_MAINNET_RPC_URL"
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
 ```
 
-`DeployMainnetReady` deploys the manager, the V2 fee collector, and all five adapters (including the
-required v4 adapter). `ADMIN` is only the fee-collector role recipient and should be a **Safe/timelock,
-not the deployer EOA**. `DeployBaseMainnet.s.sol` and `DeployBaseSepolia.s.sol` are legacy and
-intentionally revert — do not use them. Record results in
-[`docs/DEPLOYMENT_MANIFEST.md`](docs/DEPLOYMENT_MANIFEST.md).
+This verifies repository integrity, Action SHA pins, submodule pins, formatting,
+bytecode limits, deterministic tests, CI-profile invariants, app parity, the app
+production build, and High/Critical npm advisories.
 
----
+Base fork tests are a separate environment-dependent gate:
 
-## 🔗 Integration with NARA v4
-
-This is a **standalone Foundry package** — not part of the NARA Hardhat protocol repo's compile path.
-It integrates with the v4 engine only by passing deployed addresses through environment variables
-(`NARA_ENGINE`, `NARA`, `USDC`, `WETH`) and calling:
-
-```solidity
-engine.depositRewards(amount);          // route NARA fees to stakers
-engine.notifyEthRewards{value: amount}(); // route ETH fees to stakers
+```powershell
+& "$env:USERPROFILE\.foundry\bin\forge.exe" test `
+  --match-path "test/*Fork.t.sol" `
+  --fork-url $env:BASE_RPC_URL
+& "$env:USERPROFILE\.foundry\bin\forge.exe" test `
+  --match-path "test/AerodromeBasketAdapterV1.t.sol" `
+  --fork-url $env:BASE_RPC_URL
 ```
 
-The v4 engine contracts are never modified from this package.
+Never print, commit, or paste the RPC value.
 
----
+## Basket app
 
-## 📚 Documentation
+The app lives in [`app/`](app/) and follows:
 
-| Doc | What's inside |
-|-----|---------------|
-| [`docs/NARA_INTEGRATION.md`](docs/NARA_INTEGRATION.md) | Engine wiring, fee routes, deploy order, launch dependency |
-| [`docs/RECEIPT_BASKET_FLOW.md`](docs/RECEIPT_BASKET_FLOW.md) | Canonical buy / sell / withdraw flow + execution checks |
-| [`docs/EXAMPLE_BASKETS.md`](docs/EXAMPLE_BASKETS.md) | Basket configuration templates |
-| [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md) | Pre-deploy security gate |
-| [`docs/DEPLOYMENT_MANIFEST.md`](docs/DEPLOYMENT_MANIFEST.md) | Recorded after every deployment |
-| [`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md) | Current validation state |
+- [`app/AGENTS.md`](app/AGENTS.md) for implementation rules;
+- [`app/DESIGN.md`](app/DESIGN.md) for its visual system;
+- [`docs/UI_UX_NEUTRAL_ACTION_HIERARCHY.md`](docs/UI_UX_NEUTRAL_ACTION_HIERARCHY.md)
+  for neutral, self-directed value-bearing actions.
 
----
+Production buying stays disabled unless all basket statuses are explicit and
+the verified deployment manifests match the app environment. See
+[`app/README.md`](app/README.md).
 
-## ⚠️ Disclaimer
+## Deployment
 
-NARA Baskets are **not investment products** — they are non-custodial smart-contract execution tools. A
-basket is a fixed, immutable set of tokens; there is **no manager, no rebalancing, and no NARA custody
-of your assets**. Your receipt is an ERC-721 NFT representing claim to specific tokens you can withdraw
-yourself at any time (subject to those tokens transferring normally).
+The canonical deployment and verification entry points are:
 
-- **No investment advice.** Token prices can go to **zero**. NARA does not promise any return.
-- **You hold the underlying.** Composition is set at deployment and cannot be changed; the contract has
-  no admin.
-- **You are responsible** for evaluating the tokens in each basket. NARA is not a fiduciary.
-- **No tax advice** — consult your own advisor.
+- [`script/DeployMainnetReady.s.sol`](script/DeployMainnetReady.s.sol)
+- [`script/VerifyDeployedBasket.s.sol`](script/VerifyDeployedBasket.s.sol)
+- [`docs/DEPLOYMENT_MANIFEST.md`](docs/DEPLOYMENT_MANIFEST.md)
+- [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md)
 
-This README is software documentation, not an offer, solicitation, or financial promotion. Pre-launch:
-nothing here is deployed to mainnet.
+Deployment requires explicit human authorization. The role admin, swapper, and
+route manager must be distinct; the admin and route manager must be contracts.
+Launch managers accept USDC only and use zero holding, raw-withdraw, and
+referral-share fees.
 
----
+## Documentation
 
-## Community & contact
+| Document | Purpose |
+|---|---|
+| [`docs/README.md`](docs/README.md) | Documentation entry point |
+| [`docs/NARA_INTEGRATION.md`](docs/NARA_INTEGRATION.md) | NARA v4 interfaces, fee routes, adapter binding, and deployment order |
+| [`docs/RECEIPT_BASKET_FLOW.md`](docs/RECEIPT_BASKET_FLOW.md) | Buy, receipt, sell, withdrawal, and accounting behavior |
+| [`docs/EXAMPLE_BASKETS.md`](docs/EXAMPLE_BASKETS.md) | Launch composition templates |
+| [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md) | Pre-deployment security gate |
+| [`docs/DEPLOYMENT_MANIFEST.md`](docs/DEPLOYMENT_MANIFEST.md) | Sanitized deployment evidence schema |
+| [`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md) | Current test and tooling evidence |
+| [`docs/REPOSITORY_MAINTENANCE.md`](docs/REPOSITORY_MAINTENANCE.md) | Mandatory synchronization and change-control protocol |
 
-- 🌐 Website: **[naraprotocol.pro](https://naraprotocol.pro)**
-- 🟣 Farcaster: **@naraprotocol**
-- 𝕏 Twitter/X: **[@NARA_protocol](https://x.com/NARA_protocol)**
-- 🔐 Security: **security@naraprotocol.pro** (see [SECURITY.md](SECURITY.md))
+## Security model
 
----
+The receipt manager is immutable and has no owner, pause, upgrade, admin sweep,
+or mutable route configuration. The fee collector is intentionally separate and
+role-gated because it performs value conversion.
+
+No automated or internal review guarantees the absence of defects. No
+independent audit is claimed. Report suspected vulnerabilities privately using
+[`SECURITY.md`](SECURITY.md).
+
+## Current limitations
+
+- No Base basket manager, adapter set, or collector deployment is published.
+- No production app environment or basket manifest is available.
+- `ForkBuyProof` still requires a candidate stack deployed on a local Base fork.
+- Third-party tokens and DEX venues can pause, blacklist, revert, lose
+  liquidity, or change behavior.
+- The NARA hooked route supports exact-input swaps only.
+- The app supports USDC entry only.
+- Fee conversion depends on configured router and price-feed availability.
+- Moderate transitive wallet-stack advisories remain documented in
+  [`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md); the High/Critical
+  audit gate currently passes.
+
+## Legal notice
+
+This repository provides experimental software and technical documentation. It
+does not provide investment, legal, tax, or suitability advice. Basket tokens
+can lose all value. The receipt represents a claim against tokens held by the
+basket contract; it is not a promise of price, liquidity, return, protection,
+or uninterrupted exit.
+
+## Community
+
+- Website: [naraprotocol.pro](https://naraprotocol.pro)
+- Farcaster: `@naraprotocol`
+- X: [@NARA_protocol](https://x.com/NARA_protocol)
+- Security: [security@naraprotocol.pro](mailto:security@naraprotocol.pro)
 
 ## License
 

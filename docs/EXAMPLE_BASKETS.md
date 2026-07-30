@@ -18,7 +18,7 @@ Shared receipt settings:
 
 ```text
 feeRecipient = NARAIndexFeeCollectorV2
-paymentTokens = [USDC, WETH]
+paymentTokens = [USDC]
 adapters = [
   UniswapV3BasketAdapterV1      0x2626664c2603336E57B271c5C0b26F421741e481
   AerodromeBasketAdapterV1      0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43
@@ -29,7 +29,8 @@ requiredAsset = NARA
 minRequiredAssetWeightBps = deployment configured minimum
 buyFeeBps = configured fee
 sellFeeBps = configured fee
-withdrawFeeBps = configured fee (defaults to sellFeeBps if not set; cap 100 = 1%)
+withdrawFeeBps = 0 (required by the launch deploy script)
+holdingFeeBps = 0 (required by the launch deploy script)
 maxWeightDeviationBps = set from route depth and quote precision
 weightsBps total = 10000
 ```
@@ -42,10 +43,11 @@ name = NARA CULTURE Basket
 riskTier = 3 (neutral metadata; do not display as advice)
 assets = [NARA, CULTURE_TOKEN_A, CULTURE_TOKEN_B, CULTURE_TOKEN_C]
 weightsBps = [1000, 4000, 3000, 2000]
-paymentTokens = [USDC, WETH]
+paymentTokens = [USDC]
 buyFeeBps = 30
 sellFeeBps = 30
-withdrawFeeBps = 30
+withdrawFeeBps = 0
+holdingFeeBps = 0
 maxWeightDeviationBps = 50
 feeRecipient = NARAIndexFeeCollectorV2
 ```

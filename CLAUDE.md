@@ -1,8 +1,9 @@
 # CLAUDE.md — NARA Category Baskets V1 (contract package)
 
 Cold-start context for any AI working in `nara-category-baskets-v1/`.
-This is the **Foundry contract package** for NARA Baskets. The frontend app is separate
-(`../apps/nara-baskets/`, which has its own `CLAUDE.md` design system).
+This repository contains the **Foundry contract package** and the preview-first
+frontend under `app/`. The app has its own implementation rules in
+`app/AGENTS.md` and visual system in `app/DESIGN.md`.
 
 Read order: this file → `README.md` → `docs/NARA_INTEGRATION.md` → `docs/RECEIPT_BASKET_FLOW.md`.
 
@@ -43,7 +44,7 @@ adapter + NARA hook pool env values are configured.
 | Contract | Role |
 |---|---|
 | `src/NARAImmutableBasketPositionManagerV1.sol` | **THE product.** One immutable manager per basket. ERC-721 receipt per position. No owner, no roles, no pause, no admin sweep, no rebalance, no mutable config. **Receipt is owner-only / non-delegable:** `approve`/`setApprovalForAll` revert and every action requires `msg.sender == ownerOf` — only the literal owner can transfer/sell/withdraw. No operators; **not listable on approval-based marketplaces** (OpenSea etc.). This is deliberate (anti-phishing) and permanent. |
-| `src/NARAIndexFeeCollectorV2.sol` | **Canonical fee collector.** Routes basket fees → `engine.depositRewards`/`notifyEthRewards`. Role-gated SWAPPER and EXECUTOR_MANAGER with allowlisted executor + 4-byte selector. V2 has no vault redeemer path. |
+| `src/NARAIndexFeeCollectorV2.sol` | **Canonical fee collector.** Typed oracle-bounded USDC/WETH conversion plus direct NARA/ETH forwarding. Separate admin, SWAPPER, and contract ROUTE_MANAGER; two-day route delay and admin cancellation guardian. Constructor verifies the engine/NARA binding; USDC swaps and NARA deposits enforce exact balance deltas. No arbitrary calldata or sweeps. |
 
 ### Adapters (all 5 are canonical; production set includes the v4 one)
 
@@ -89,8 +90,14 @@ Forge is **not on PATH**; use the full binary path. Always pass `--root`.
 # Build
 ~/.foundry/bin/forge build --root nara-category-baskets-v1
 
-# All non-fork tests (fast, no RPC)
-~/.foundry/bin/forge test --root nara-category-baskets-v1 --no-match-path "test/AerodromeBasketAdapterV1.t.sol"
+# Deterministic tests (no RPC)
+~/.foundry/bin/forge test --root nara-category-baskets-v1 \
+  --no-match-path "test/*Fork*.t.sol" \
+  --no-match-contract NARAImmutableBasketPositionManagerV1InvariantTest
+
+# CI-profile invariant campaign
+FOUNDRY_PROFILE=ci ~/.foundry/bin/forge test --root nara-category-baskets-v1 \
+  --match-contract NARAImmutableBasketPositionManagerV1InvariantTest
 
 # Manager suite only
 ~/.foundry/bin/forge test --root nara-category-baskets-v1 --match-contract NARAImmutableBasketPositionManagerV1Test
@@ -99,7 +106,10 @@ Forge is **not on PATH**; use the full binary path. Always pass `--root`.
 ~/.foundry/bin/forge test --root nara-category-baskets-v1 --match-contract "PancakeV3BasketAdapterV1Test|AerodromeSlipstreamBasketAdapterV1Test|UniswapV4BasketAdapterV1Test"
 
 # Fork tests (need Base RPC — load from ../nara-protocol-hardhat/.env, never print it)
-~/.foundry/bin/forge test --root nara-category-baskets-v1 --match-path "test/AerodromeBasketAdapterV1.t.sol" --fork-url <BASE_RPC>
+~/.foundry/bin/forge test --root nara-category-baskets-v1 \
+  --match-path "test/*Fork.t.sol" --fork-url <BASE_RPC>
+~/.foundry/bin/forge test --root nara-category-baskets-v1 \
+  --match-path "test/AerodromeBasketAdapterV1.t.sol" --fork-url <BASE_RPC>
 ```
 
 PowerShell: `& "$env:USERPROFILE\.foundry\bin\forge.exe" build --root nara-category-baskets-v1`
@@ -114,10 +124,13 @@ v4). `DeployBaseMainnet.s.sol` / `DeployBaseSepolia.s.sol` are legacy and intent
 1. Every receipt basket includes NARA at or above `MIN_NARA_WEIGHT_BPS`.
 2. Production adapter set includes `UniswapV4BasketAdapterV1`.
 3. `feeRecipient` points to `NARAIndexFeeCollectorV2`.
-4. Fee collector executor selectors: explicit 4-byte allowlist only, never multicall/batch.
-5. The immutable manager has **no post-deploy admin** — get the config right before deploy; it's permanent.
-6. Frontend/UI work follows `../apps/nara-baskets/CLAUDE.md` (Satoshi/Inter/Mono, Base Blue `#0000FF`,
-   CORE/AI/FINANCE/CULTURE) and the neutral-choice rules in the workspace-root `../CLAUDE.md`.
+4. Basket `withdrawFeeBps` and `holdingFeeBps` are zero at launch; do not send long-tail underlying fee assets to the narrow collector.
+5. Fee collector admin, swapper, and route manager must be three different identities; admin and route manager must be contracts.
+6. Fee collector engine `NARA()` must match its immutable NARA token; preserve exact USDC route spend and exact NARA engine-pull checks.
+7. The immutable manager has **no post-deploy admin** — get the config right before deploy; it's permanent.
+8. Frontend/UI work follows `app/AGENTS.md` and `app/DESIGN.md`
+   (Satoshi/Inter/Mono, Base Blue `#0000FF`, CORE/AI/FINANCE/CULTURE)
+   together with `docs/UI_UX_NEUTRAL_ACTION_HIERARCHY.md`.
 
 ## Related docs
 

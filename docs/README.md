@@ -1,28 +1,43 @@
-# NARA Baskets — Documentation
+# NARA Baskets documentation
 
-Navigation for the `nara-category-baskets-v1` docs. Start with the [project README](../README.md) for
-the overview, then dive in here.
+Start with the [project README](../README.md), then use this index for contract,
+app, deployment, and maintenance detail.
 
 ## Read in this order
 
-1. **[NARA_INTEGRATION.md](NARA_INTEGRATION.md)** — how baskets wire into the NARA v4 engine: fee
-   routes, deploy order, and the **launch dependency** (the taxed Uniswap v4 pool). Read first before
-   deploying anything.
-2. **[RECEIPT_BASKET_FLOW.md](RECEIPT_BASKET_FLOW.md)** — the canonical one-click flow: buy → receipt
-   → sell/withdraw, with every execution and accounting check.
-3. **[EXAMPLE_BASKETS.md](EXAMPLE_BASKETS.md)** — basket configuration templates.
+1. [`NARA_INTEGRATION.md`](NARA_INTEGRATION.md) — NARA v4 interfaces, fee
+   routes, deployment order, and the canonical hooked-pool dependency.
+2. [`RECEIPT_BASKET_FLOW.md`](RECEIPT_BASKET_FLOW.md) — buy, receipt, sell,
+   withdrawal, and exact-accounting behavior.
+3. [`EXAMPLE_BASKETS.md`](EXAMPLE_BASKETS.md) — launch composition templates.
+4. [`../app/README.md`](../app/README.md) — preview app setup and fail-closed
+   production gates.
 
-## Reference
+## Operations and evidence
 
-| Doc | Purpose |
-|-----|---------|
-| [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) | Pre-deploy security gate — must pass before mainnet value |
-| [DEPLOYMENT_MANIFEST.md](DEPLOYMENT_MANIFEST.md) | Recorded and verified after every deployment |
-| [VALIDATION_STATUS.md](VALIDATION_STATUS.md) | Current validation / test state |
+| Document | Purpose |
+|---|---|
+| [`SECURITY_CHECKLIST.md`](SECURITY_CHECKLIST.md) | Pre-deployment contract, role, route, app, and evidence gate |
+| [`DEPLOYMENT_MANIFEST.md`](DEPLOYMENT_MANIFEST.md) | Sanitized manifest schema and post-deployment verification |
+| [`VALIDATION_STATUS.md`](VALIDATION_STATUS.md) | Dated test, fork, analyzer, app, and known-gap evidence |
+| [`releases/NARA-20260729-baskets-v2-alignment.md`](releases/NARA-20260729-baskets-v2-alignment.md) | Current cross-repository release state and downstream handoff |
+| [`REPOSITORY_MAINTENANCE.md`](REPOSITORY_MAINTENANCE.md) | Mandatory source/config/app/documentation synchronization |
+| [`UI_UX_NEUTRAL_ACTION_HIERARCHY.md`](UI_UX_NEUTRAL_ACTION_HIERARCHY.md) | Neutral action and legal UX guardrails |
 
-## Related (NARA protocol repo)
+## App rules
 
-- `NARA_V4_BASKETS_LAUNCH_STRATEGY.md` — why baskets are the v4 crown launch / front door
-- `NARA_V4_ECONOMIC_LAUNCH_ROADMAP.md` — where baskets sit in the overall launch order
+- [`../app/AGENTS.md`](../app/AGENTS.md) — implementation and cold-AI rules
+- [`../app/DESIGN.md`](../app/DESIGN.md) — approved visual and interaction system
+- [`../app/src/shared/baskets.ts`](../app/src/shared/baskets.ts) — app basket
+  configuration and transaction builders
+- [`../config/launch-baskets.json`](../config/launch-baskets.json) — contract/app
+  composition parity source
 
-> Security disclosure: see [`../SECURITY.md`](../SECURITY.md). License: [`../LICENSE`](../LICENSE) (MIT).
+## Related NARA repositories
+
+- [NARA public documentation](https://github.com/NARAProtocol/nara_protocol)
+- [NARA v4 engineering](https://github.com/NARAProtocol/nara_protocol_v4)
+
+Security disclosure follows [`../SECURITY.md`](../SECURITY.md). Contributions
+follow [`../CONTRIBUTING.md`](../CONTRIBUTING.md). The repository is licensed
+under [`../LICENSE`](../LICENSE).

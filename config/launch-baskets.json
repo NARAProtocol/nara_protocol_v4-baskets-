@@ -1,6 +1,6 @@
 {
   "$schema": "Launch basket curation file. Operator fills live NARA values before deploy. Frontend parity checks compare this file against the app basket config.",
-  "lastUpdated": "2026-07-26",
+  "lastUpdated": "2026-07-28",
   "chainId": 8453,
   "baseAddresses": {
     "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -20,22 +20,27 @@
     "PERMIT2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
     "NARA": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A",
     "NARA_ENGINE": "0xbC2492BA73dE35d1114b5c18d7db633aca8963c9",
-    "NARA_V4_HOOK": "0x9a01c2DcF713cDB12B8ef4Eb264D5c3203b06088",
+    "NARA_V4_HOOK": null,
     "NARA_V4_POOL_FEE": 3000,
     "NARA_V4_TICK_SPACING": 60
   },
-  "uniswapV3SelectorAllowlist": {
-    "executor": "0x2626664c2603336E57B271c5C0b26F421741e481",
-    "allowedSelectors": {
-      "exactInputSingle": "0x04e45aaf"
-    },
-    "deniedSelectors": [
-      "multicall",
-      "selfPermit",
-      "unwrapWETH9WithFee",
-      "sweepTokenWithFee"
-    ],
-    "rationale": "Only direct exact-input swap selectors are allowlisted. Multicall is denied because it can bundle arbitrary calls inside an approved selector entry."
+  "feeCollectorRoute": {
+    "router": "0x2626664c2603336E57B271c5C0b26F421741e481",
+    "usdcUsdFeed": null,
+    "ethUsdFeed": null,
+    "poolFee": 500,
+    "maxOracleAgeSeconds": 3600,
+    "maxSlippageBps": 100,
+    "admin": null,
+    "swapper": null,
+    "routeManager": null,
+    "routeUpdateDelaySeconds": 172800,
+    "rationale": "The collector accepts only typed exact-input USDC-to-WETH conversion with an oracle-derived minimum. Admin, swapper, and contract route manager must be distinct."
+  },
+  "launchFeePolicy": {
+    "withdrawFeeBps": 0,
+    "holdingFeeBps": 0,
+    "rationale": "The launch collector deliberately handles only USDC and NARA fee assets; no long-tail underlying fees may be sent to it."
   },
   "baskets": [
     {
@@ -50,7 +55,7 @@
       "maxWeightDeviationBps": 25,
       "minNaraWeightBps": 500,
       "assets": [
-        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1000, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": "0x9a01c2DcF713cDB12B8ef4Eb264D5c3203b06088", "pairToken": "USDC" } },
+        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1000, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": null, "pairToken": "USDC" } },
         { "symbol": "cbBTC", "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", "weightBps": 3000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } },
         { "symbol": "WETH", "address": "0x4200000000000000000000000000000000000006", "weightBps": 3000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } },
         { "symbol": "AERO", "address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631", "weightBps": 2000, "aerodromePool": { "stable": false, "pairToken": "USDC" } },
@@ -81,7 +86,7 @@
       "maxWeightDeviationBps": 50,
       "minNaraWeightBps": 1000,
       "assets": [
-        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": "0x9a01c2DcF713cDB12B8ef4Eb264D5c3203b06088", "pairToken": "USDC" } },
+        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": null, "pairToken": "USDC" } },
         { "symbol": "VIRTUAL", "address": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b", "weightBps": 3500, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } },
         { "symbol": "VVV", "address": "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf", "weightBps": 3000, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
         { "symbol": "AIXBT", "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825", "weightBps": 2000, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } }
@@ -107,7 +112,7 @@
       "maxWeightDeviationBps": 75,
       "minNaraWeightBps": 1000,
       "assets": [
-        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": "0x9a01c2DcF713cDB12B8ef4Eb264D5c3203b06088", "pairToken": "USDC" } },
+        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": null, "pairToken": "USDC" } },
         { "symbol": "BRETT", "address": "0x532f27101965dd16442E59d40670FaF5eBB142E4", "weightBps": 3500, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
         { "symbol": "DEGEN", "address": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed", "weightBps": 2500, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
         { "symbol": "TOSHI", "address": "0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4", "weightBps": 2500, "aerodromePool": { "stable": false, "pairToken": "USDC" } }
@@ -133,7 +138,7 @@
       "maxWeightDeviationBps": 50,
       "minNaraWeightBps": 1000,
       "assets": [
-        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": "0x9a01c2DcF713cDB12B8ef4Eb264D5c3203b06088", "pairToken": "USDC" } },
+        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": null, "pairToken": "USDC" } },
         { "symbol": "AERO", "address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631", "weightBps": 3500, "aerodromePool": { "stable": false, "pairToken": "USDC" } },
         { "symbol": "MORPHO", "address": "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842", "weightBps": 3000, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } },
         { "symbol": "WETH", "address": "0x4200000000000000000000000000000000000006", "weightBps": 2000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } }
@@ -149,12 +154,15 @@
     }
   ],
   "launchOrder": [
-    "Confirm the existing v4 core and initialized NARA pool have completed a documented 48h soak",
+    "Deploy and verify the corrected replacement hook, vault, and compounder; never initialize the quarantined Stage A pool",
+    "Bind the exact opening sqrtPriceX96 and prove the registered pool uses fee 3000 and tick spacing 60",
+    "Seed the replacement NARA pool, smoke test it, and complete the documented observation period",
     "Run the complete DeployMainnetReady transaction sequence on an exact Base-mainnet fork",
-    "Verify the executor and single EXECUTOR_0_SELECTOR before the irreversible fee-collector allowlist freeze",
-    "Review the single broadcast sequence: five adapters, V2 collector, selectors, allowlist freeze, CORE manager, Safe handoff",
-    "Broadcast only with a reviewed contract Safe/timelock ADMIN; an EOA is rejected",
-    "Verify manager, collector roles, frozen allowlist, adapters, and Safe admin on Basescan",
+    "Verify the typed collector router, oracle feeds, pool fee, age bound, slippage bound, and distinct role holders",
+    "Review the single broadcast sequence: five adapters, oracle-bounded V2 collector, CORE manager, and role assignments",
+    "Broadcast only with distinct contract ADMIN and ROUTE_MANAGER addresses plus a separate SWAPPER",
+    "Verify manager, collector route, collector roles, adapters, and Safe admin on Basescan",
+    "Verify the frontend small-buy cap uses the lower configured/live NARA depth",
     "Smoke test buy/sell/withdrawUnderlying on pilot basket",
     "If clean: deploy CULTURE + FINANCE baskets",
     "AI basket deploys only if route/depth proof passes on deploy day"

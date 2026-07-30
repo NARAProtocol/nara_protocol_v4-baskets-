@@ -1,6 +1,6 @@
 # Validation Status
 
-Last validated: 2026-07-26.
+Last validated: 2026-07-30.
 
 No independent audit is claimed. Current assurance is repository tests, fork
 verification, and documented internal multi-agent review.
@@ -30,15 +30,24 @@ RPC value or any `.env` secret in chat, logs, reports, or audit artifacts.
 # Build
 & "$env:USERPROFILE\.foundry\bin\forge.exe" build --root nara-category-baskets-v1
 
-# Clean non-fork suite
+# Deterministic non-fork suite
 & "$env:USERPROFILE\.foundry\bin\forge.exe" test --root nara-category-baskets-v1 `
-  --no-match-contract "AerodromeBasketAdapterV1Test|ForkBuyProof"
+  --no-match-path "test/*Fork*.t.sol" `
+  --no-match-contract NARAImmutableBasketPositionManagerV1InvariantTest
 
-# Aerodrome Base fork suite
+# Bounded CI invariant suite
+$env:FOUNDRY_PROFILE = "ci"
+& "$env:USERPROFILE\.foundry\bin\forge.exe" test --root nara-category-baskets-v1 `
+  --match-contract NARAImmutableBasketPositionManagerV1InvariantTest
+Remove-Item Env:FOUNDRY_PROFILE
+
+# Base adapter fork suites
 $envFile = Get-Content "nara-protocol-hardhat\.env"
 $rpcLine = $envFile | Where-Object { $_ -match '^(BASE_MAINNET_RPC_URL|BASE_RPC_URL)=' } | Select-Object -First 1
 if (-not $rpcLine) { throw "BASE_MAINNET_RPC_URL or BASE_RPC_URL is required" }
 $rpc = ($rpcLine -split '=', 2)[1].Trim().Trim('"').Trim("'")
+& "$env:USERPROFILE\.foundry\bin\forge.exe" test --root nara-category-baskets-v1 `
+  --match-path "test/*Fork.t.sol" --fork-url $rpc
 & "$env:USERPROFILE\.foundry\bin\forge.exe" test --root nara-category-baskets-v1 `
   --match-path "test/AerodromeBasketAdapterV1.t.sol" --fork-url $rpc
 
@@ -55,20 +64,27 @@ $rpc = ($rpcLine -split '=', 2)[1].Trim().Trim('"').Trim("'")
 ```text
 Forge version: 1.4.3-stable, called by absolute path.
 Build: pass.
-Full environment-free suite: 136 passed, 0 failed, 5 fork-dependent tests
-skipped (141 total).
+Deterministic non-fork suite: 148 passed, 0 failed, 1 environment-dependent
+skip (149 total). Fork-named suites were excluded from this command.
+CI invariant suite: 4 passed, 0 failed, 0 skipped. Each of the three stateful
+invariants ran 256 campaigns and 16,384 calls; the rescue fuzz property ran
+1,000 cases.
 ```
 
 Covered non-fork suites:
 
 ```text
-NARAImmutableBasketPositionManagerV1Test    - 48 tests
+NARAImmutableBasketPositionManagerV1Test    - 49 tests
 CategoryIndexSuiteV1Test                    - 19 tests
 NARAIndexFeeCollectorV1Test                 - 14 tests
-NARAIndexFeeCollectorV2Test                 - 15 tests
+NARAIndexFeeCollectorV2Test                 - 23 tests
 AerodromeSlipstreamBasketAdapterV1Test      - 9 tests
 PancakeV3BasketAdapterV1Test                - 10 tests
 UniswapV3BasketAdapterV1Test                - 9 tests
+UniswapV4BasketAdapterV1Test                - 8 tests
+DeployMainnetReadyTest                      - 1 test
+DisabledLegacyDeploymentTest                - 3 tests
+VerifyDeployedBasketTest                    - 3 tests
 ```
 
 Fork-dependent suites skipped without their required context:
@@ -91,8 +107,7 @@ of relying on stale hardcoded local addresses.
 
 ```text
 forge fmt --check:
-  Fails with existing formatting diffs. Do not assume this means the latest
-  audit changed source formatting.
+  Passes after applying canonical forge formatting to the working tree.
 
 forge coverage:
   Fails without IR due stack-too-deep.
@@ -100,14 +115,25 @@ forge coverage:
   Normal build and tests still pass.
 
 slither:
-  Not installed on PATH in the local shell.
+  Slither 0.11.5 was run over the canonical source set through the pinned
+  Python environment. It completed analysis of 50 contracts and emitted 115
+  raw detector results. The nonzero exit reflects detector output, not a
+  compilation failure. Reentrancy-balance reports cover functions protected by
+  nonReentrant and deliberate before/after balance accounting; weak-PRNG is a
+  fee-remainder modulo operation, not randomness; default-zero locals,
+  timestamp deadlines, bounded external-call loops, and style/gas detectors
+  remain analyzer review items. CI reruns Slither as an explicitly advisory
+  check. This is not an independent audit or proof that every raw result is a
+  false positive.
 
 mythril:
   Not installed on PATH in the local shell.
 
 aderyn:
-  Command exists globally, but the npm global install is broken because
-  @cyfrin/aderyn/run-aderyn.js is missing.
+  The Windows PATH entry is a stale npm shim whose target package is absent, so
+  no local Aderyn result is claimed. CI installs Aderyn on Linux from the
+  installer at the immutable commit recorded in ci.yml and runs it as an
+  advisory check.
 ```
 
 ## Notes
@@ -120,15 +146,49 @@ partial raw withdrawal, selected-asset partial exit, receiver guards, immutable
 constructor config, holding fee accrual/sweep, referral splits, adapter
 accounting lies, allocation/slippage checks, and solvency views.
 
-Frontend validation for `apps/nara-baskets` on 2026-06-03:
+Frontend validation for `app/` on 2026-07-29:
 
 ```powershell
-npm run typecheck       # pass
 npm run test:builders   # pass
+npm run check:copy      # pass
+npm run check:launch-config # pass
 npm run build           # pass
+npm run check           # pass
 ```
 
 `npm run build` emits third-party Rolldown pure-annotation warnings from wallet
 dependencies plus a chunk-size warning, but exits successfully.
 
-Independent review has not been performed and is not represented as complete.
+Frontend dependency audit on 2026-07-29:
+
+```text
+npm audit --audit-level=high: 0 critical, 0 high, 9 moderate.
+```
+
+The remaining moderate advisory is `uuid < 11.1.1` inside MetaMask connector
+dependencies. npm proposes Wagmi 3 as the automatic fix, but RainbowKit 2.2.11
+requires Wagmi 2. The compatible stack therefore remains on Wagmi 2.19.5 with
+Viem 2.55.10, Vite 8.1.5, Wrangler 4.115.0, and patched Axios/`ws` overrides.
+Do not claim zero advisories; do not use `npm audit fix --force` without a
+reviewed RainbowKit/Wagmi migration and wallet regression plan.
+
+The Base adapter fork suites were rerun on 2026-07-30: 31 passed, 0 failed,
+0 skipped across Uniswap V3, Aerodrome AMM, Aerodrome Slipstream, and
+PancakeSwap V3. The manual GitHub Actions gate runs both the three
+`*Fork.t.sol` suites and the separately named 16-test
+`AerodromeBasketAdapterV1.t.sol` suite so neither group is silently omitted.
+`ForkBuyProof` was not run because it requires the candidate manager and
+adapters to be deployed on the local fork first; that rehearsal remains
+required before deployment. Independent review has not been performed and is
+not represented as complete.
+
+The frontend production gates currently fail closed, as intended:
+
+- fork mode and a LINK stand-in are still configured;
+- the replacement fee collector, v4 adapter, hook, pool fee, and tick spacing
+  are not populated with verified production values;
+- basket status values are not explicitly live/exit-only; and
+- `deployments/base-mainnet/{base,ai,meme,defi}.json` do not exist.
+
+These are deployment-state failures, not source-test failures. Never replace
+them with guessed addresses or bypass the checks.

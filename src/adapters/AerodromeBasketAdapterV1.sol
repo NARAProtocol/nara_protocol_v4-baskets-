@@ -141,13 +141,8 @@ contract AerodromeBasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
         tokenInErc.forceApprove(address(router), amountIn);
 
         // Router sends final tokenOut directly to msg.sender (position manager).
-        uint256[] memory amounts = router.swapExactTokensForTokens(
-            amountIn,
-            minAmountOut,
-            routes,
-            msg.sender,
-            block.timestamp
-        );
+        uint256[] memory amounts =
+            router.swapExactTokensForTokens(amountIn, minAmountOut, routes, msg.sender, block.timestamp);
 
         tokenInErc.forceApprove(address(router), 0);
 

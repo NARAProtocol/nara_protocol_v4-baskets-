@@ -251,9 +251,8 @@ contract NARAImmutableBasketPositionManagerV1Test is Test {
         config.adapters = adapters;
         config.requiredAssetAdapter = address(adapter);
 
-        NARAImmutableBasketPositionManagerV1 pinned = new NARAImmutableBasketPositionManagerV1(
-            "Pinned Basket", "PIN", address(nara), 1_000, config
-        );
+        NARAImmutableBasketPositionManagerV1 pinned =
+            new NARAImmutableBasketPositionManagerV1("Pinned Basket", "PIN", address(nara), 1_000, config);
         NARAImmutableBasketPositionManagerV1.BuyParams memory params = _buyParams(1_000 ether, 0);
         params.swaps[0].adapter = address(wrongNaraAdapter);
 
@@ -687,6 +686,39 @@ contract NARAImmutableBasketPositionManagerV1Test is Test {
         assertEq(manager.protocolFeeAccrued(address(nara)), 0);
     }
 
+    function testHoldingFeeDoesNotDependOnPermissionlessAccrualCadence() public {
+        uint256 frequentlyAccrued = _buyForAlice();
+        uint256 onceAccrued = _buyForAlice();
+        uint256 startedAt = block.timestamp;
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = frequentlyAccrued;
+        for (uint256 i = 1; i <= 12; i++) {
+            vm.warp(startedAt + (365 days * i) / 12);
+            manager.accrueHoldingFee(ids);
+        }
+
+        ids[0] = onceAccrued;
+        manager.accrueHoldingFee(ids);
+
+        assertEq(
+            manager.positionAmountOf(frequentlyAccrued, address(nara)),
+            manager.positionAmountOf(onceAccrued, address(nara))
+        );
+        assertEq(
+            manager.positionAmountOf(frequentlyAccrued, address(pepe)),
+            manager.positionAmountOf(onceAccrued, address(pepe))
+        );
+        assertEq(
+            manager.positionAmountOf(frequentlyAccrued, address(doge)),
+            manager.positionAmountOf(onceAccrued, address(doge))
+        );
+        assertEq(
+            manager.positionAmountOf(frequentlyAccrued, address(bonk)),
+            manager.positionAmountOf(onceAccrued, address(bonk))
+        );
+    }
+
     function testHoldingFeeSettledOnWithdraw() public {
         uint256 tokenId = _buyForAlice();
         vm.warp(block.timestamp + 365 days);
@@ -995,15 +1027,15 @@ contract NARAImmutableBasketPositionManagerV1Test is Test {
         uint256[] memory ids = new uint256[](1);
         ids[0] = tokenId;
 
-        vm.warp(2);  // 1s elapsed since buy (setUp warps to 1)
+        vm.warp(2); // 1s elapsed since buy (setUp warps to 1)
         manager.accrueHoldingFee(ids);
         assertEq(manager.lastHoldingAccrualAt(tokenId), 2);
 
-        vm.warp(3);  // another 1s
+        vm.warp(3); // another 1s
         manager.accrueHoldingFee(ids);
         assertEq(manager.lastHoldingAccrualAt(tokenId), 3);
 
-        vm.warp(3 + 365 days - 2);  // complete the year
+        vm.warp(3 + 365 days - 2); // complete the year
         manager.accrueHoldingFee(ids);
 
         // 1%/yr on 99 ether nara ≈ 0.99 ether. Split accrual charges slightly less due to

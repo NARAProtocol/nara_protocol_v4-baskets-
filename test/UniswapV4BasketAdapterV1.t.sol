@@ -179,16 +179,14 @@ contract UniswapV4BasketAdapterV1Test is Test {
         assertEq(router.lastCommands(), hex"10", "commands");
 
         // input = abi.encode(bytes actions, bytes[] params).
-        (bytes memory actions, bytes[] memory params) =
-            abi.decode(router.lastInput(), (bytes, bytes[]));
+        (bytes memory actions, bytes[] memory params) = abi.decode(router.lastInput(), (bytes, bytes[]));
 
         // actions = SWAP_EXACT_IN_SINGLE, SETTLE_ALL, TAKE_ALL.
         assertEq(actions, hex"060c0f", "actions");
         assertEq(params.length, 3, "params length");
 
         // params[0] = ExactInputSingleParams. Decode and verify the PoolKey + amounts.
-        DecodedExactInputSingleParams memory swapParams =
-            abi.decode(params[0], (DecodedExactInputSingleParams));
+        DecodedExactInputSingleParams memory swapParams = abi.decode(params[0], (DecodedExactInputSingleParams));
 
         // currencies sorted by address.
         (address c0, address c1) =

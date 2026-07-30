@@ -1,0 +1,56 @@
+name: Reproducible bug
+description: Report a non-security defect with a minimal reproduction.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not use this form for vulnerabilities. Follow SECURITY.md.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Exact commit SHA where the behavior occurs.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Receipt manager
+        - Fee collector
+        - Swap adapter
+        - Deployment or verification script
+        - Basket app
+        - Documentation
+        - CI or tooling
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include complete commands or a minimal test without credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Forge version, Node version, and relevant network context.
+    validations:
+      required: true

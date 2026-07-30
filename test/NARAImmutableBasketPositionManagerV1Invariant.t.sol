@@ -569,7 +569,7 @@ contract NARAImmutableBasketPositionManagerV1InvariantTest is StdInvariant, Test
                 remaining += manager.positionAmountOf(tokenId, token);
             }
 
-            (,, , , bool closed) = manager.positionOf(tokenId);
+            (,,,, bool closed) = manager.positionOf(tokenId);
 
             try manager.ownerOf(tokenId) returns (address owner) {
                 assertNotEq(owner, address(0), "open receipt owner");

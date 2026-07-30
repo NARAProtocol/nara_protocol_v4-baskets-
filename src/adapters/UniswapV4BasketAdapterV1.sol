@@ -101,14 +101,17 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
         uint256 minAmountOut,
         bytes calldata data
     ) external nonReentrant returns (uint256 amountInUsed, uint256 amountOut) {
-        if (tokenIn == address(0) || tokenOut == address(0) || tokenIn == tokenOut) revert InvalidTokens();
+        if (tokenIn == address(0) || tokenOut == address(0) || tokenIn == tokenOut) {
+            revert InvalidTokens();
+        }
         if (amountIn == 0 || minAmountOut == 0) revert ZeroAmount();
         // v4 swap amounts are uint128.
         if (amountIn > type(uint128).max || minAmountOut > type(uint128).max) revert AmountTooLarge();
         uint128 amountIn128 = amountIn.toUint128();
         uint128 minAmountOut128 = minAmountOut.toUint128();
 
-        // data = abi.encode(uint24 fee, int24 tickSpacing, address hooks) → exactly 3 words.
+        // Canonical fee, tick spacing, and hook are constructor immutables. Reject all
+        // caller-supplied route data so this adapter cannot be redirected to another pool.
         if (data.length != 0) revert DataLengthInvalid();
 
         // Pull the exact input the manager approved.
@@ -121,13 +124,7 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
 
         uint256 inBeforeSwap = IERC20(tokenIn).balanceOf(address(this));
         uint256 received = _executeV4Swap(
-            tokenIn,
-            tokenOut,
-            amountIn128,
-            minAmountOut128,
-            canonicalFee,
-            canonicalTickSpacing,
-            canonicalHooks
+            tokenIn, tokenOut, amountIn128, minAmountOut128, canonicalFee, canonicalTickSpacing, canonicalHooks
         );
         if (received < minAmountOut) revert OutputTooLow(received, minAmountOut);
         uint256 inAfterSwap = IERC20(tokenIn).balanceOf(address(this));
@@ -155,8 +152,7 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
         address hooks
     ) internal returns (uint256 received) {
         // PoolKey currencies are sorted by address.
-        (address currency0, address currency1) =
-            tokenIn < tokenOut ? (tokenIn, tokenOut) : (tokenOut, tokenIn);
+        (address currency0, address currency1) = tokenIn < tokenOut ? (tokenIn, tokenOut) : (tokenOut, tokenIn);
         bool zeroForOne = tokenIn == currency0;
 
         bytes memory actions = abi.encodePacked(SWAP_EXACT_IN_SINGLE, SETTLE_ALL, TAKE_ALL);
@@ -165,11 +161,7 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
         params[0] = abi.encode(
             ExactInputSingleParams({
                 poolKey: PoolKey({
-                    currency0: currency0,
-                    currency1: currency1,
-                    fee: fee,
-                    tickSpacing: tickSpacing,
-                    hooks: hooks
+                    currency0: currency0, currency1: currency1, fee: fee, tickSpacing: tickSpacing, hooks: hooks
                 }),
                 zeroForOne: zeroForOne,
                 amountIn: amountIn,

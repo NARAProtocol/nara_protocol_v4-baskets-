@@ -2,50 +2,157 @@ name: Baskets CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
-# lib/ is gitignored (deps via forge install), so CI re-installs the pinned versions.
-# OZ is pinned to the version this repo was built against (lib/openzeppelin-contracts 5.0.2).
-env:
-  FOUNDRY_PROFILE: ci
+permissions:
+  contents: read
+
+concurrency:
+  group: nara-baskets-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-test:
-    name: build · test (non-fork)
+  repository:
+    name: repository · integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: foundry-rs/foundry-toolchain@v1
-      - name: Configure git (forge install commits)
-        run: |
-          git config --global user.email "ci@nara.local"
-          git config --global user.name "nara-ci"
-      - name: Install deps (pinned)
-        run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts@v5.0.2
-      - run: forge --version
-      - name: Build (with sizes)
-        run: forge build --sizes
-      - name: Test (non-fork; *Fork.t.sol self-skip without an RPC)
-        run: forge test -vv
+      - name: Checkout pinned source and dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Verify public repository
+        run: node scripts/check-repository.mjs
 
-  fork:
-    name: fork tests (live Base liquidity)
+  contracts:
+    name: contracts · format · build · test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout pinned source and dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+        with:
+          version: v1.4.3
+      - name: Record dependency pins
+        run: git submodule status --recursive
+      - name: Format
+        run: forge fmt --check
+      - name: Build and enforce bytecode limits
+        run: forge build --sizes
+      - name: Deterministic unit and fuzz tests
+        run: >-
+          forge test
+          --no-match-path "test/*Fork*.t.sol"
+          --no-match-contract NARAImmutableBasketPositionManagerV1InvariantTest
+          -vv
+      - name: CI-profile invariants
+        run: forge test --match-contract NARAImmutableBasketPositionManagerV1InvariantTest -vv
+        env:
+          FOUNDRY_PROFILE: ci
+
+  app:
+    name: app · test · build · audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install locked app dependencies
+        run: npm ci --prefix app
+      - name: Dependency audit (High and Critical)
+        run: npm audit --prefix app --audit-level=high
+      - name: Builder, copy, parity, type, and production build checks
+        run: npm run check --prefix app
+
+  slither:
+    name: slither (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - name: Checkout pinned source and dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+        with:
+          version: v1.4.3
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Install Slither
+        run: pip install slither-analyzer==0.11.3
+      - name: Analyze canonical contracts
+        run: >-
+          slither .
+          --filter-paths
+          "lib|test|script|src/NARAIndexFeeCollectorV1.sol|src/CategoryIndexSuiteV1.sol"
+
+  aderyn:
+    name: aderyn (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - name: Checkout pinned source and dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+        with:
+          version: v1.4.3
+      - name: Install Aderyn from pinned installer
+        run: |
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/Cyfrin/aderyn/a288420403cb1ae5f38ce606c3a6d4e605b9c81d/cyfrinup/install | bash
+          echo "$HOME/.cyfrin/bin" >> "$GITHUB_PATH"
+      - name: Analyze Solidity sources
+        run: aderyn --src src .
+
+  fork-adapters:
+    name: fork adapters (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     env:
       BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: foundry-rs/foundry-toolchain@v1
-      - name: Configure git
+      - name: Require configured Base RPC secret
+        shell: bash
         run: |
-          git config --global user.email "ci@nara.local"
-          git config --global user.name "nara-ci"
-      - name: Install deps (pinned)
-        run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts@v5.0.2
-      - name: Fork adapter tests (real Base DEX state)
-        if: ${{ env.BASE_RPC_URL != '' }}
-        run: forge test --match-path "test/*Fork.t.sol" --fork-url "$BASE_RPC_URL" -vv
-      - name: No RPC secret configured
-        if: ${{ env.BASE_RPC_URL == '' }}
-        run: echo "Set the BASE_RPC_URL repo secret (Settings > Secrets > Actions) to run fork tests against live Base liquidity."
+          if [ -z "$BASE_RPC_URL" ]; then
+            echo "BASE_RPC_URL is required for the manual fork gate."
+            exit 1
+          fi
+      - name: Checkout pinned source and dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+        with:
+          version: v1.4.3
+      - name: Run Base adapter fork tests
+        run: |
+          forge test --match-path "test/*Fork.t.sol" --fork-url "$BASE_RPC_URL" -vv
+          forge test --match-path "test/AerodromeBasketAdapterV1.t.sol" --fork-url "$BASE_RPC_URL" -vv

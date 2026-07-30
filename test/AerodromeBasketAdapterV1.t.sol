@@ -12,13 +12,13 @@ import {AerodromeBasketAdapterV1, IAerodromeRouter} from "../src/adapters/Aerodr
 
 contract AerodromeBasketAdapterV1Test is Test {
     // ─── Base mainnet addresses ────────────────────────────────────────────────
-    address constant AERODROME_ROUTER  = 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43;
+    address constant AERODROME_ROUTER = 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43;
     address constant AERODROME_FACTORY = 0x420DD381b31aEf6683db6B902084cB0FFECe40Da;
-    address constant USDC  = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address constant WETH  = 0x4200000000000000000000000000000000000006;
+    address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address constant WETH = 0x4200000000000000000000000000000000000006;
     address constant BRETT = 0x532f27101965dd16442E59d40670FaF5eBB142E4;
     address constant TOSHI = 0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4;
-    address constant AERO  = 0x940181a94A35A4569E4529A3CDfB74e38FD98631;
+    address constant AERO = 0x940181a94A35A4569E4529A3CDfB74e38FD98631;
 
     AerodromeBasketAdapterV1 adapter;
 
@@ -46,16 +46,24 @@ contract AerodromeBasketAdapterV1Test is Test {
         return abi.encode(routes);
     }
 
-    function _singleRoute(address from, address to, bool stable) internal pure returns (IAerodromeRouter.Route[] memory) {
+    function _singleRoute(address from, address to, bool stable)
+        internal
+        pure
+        returns (IAerodromeRouter.Route[] memory)
+    {
         IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
         routes[0] = IAerodromeRouter.Route(from, to, stable, 0x420DD381b31aEf6683db6B902084cB0FFECe40Da);
         return routes;
     }
 
-    function _twoHopRoute(address from, address mid, address to) internal pure returns (IAerodromeRouter.Route[] memory) {
+    function _twoHopRoute(address from, address mid, address to)
+        internal
+        pure
+        returns (IAerodromeRouter.Route[] memory)
+    {
         IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](2);
-        routes[0] = IAerodromeRouter.Route(from, mid,  false, 0x420DD381b31aEf6683db6B902084cB0FFECe40Da);
-        routes[1] = IAerodromeRouter.Route(mid,  to,   false, 0x420DD381b31aEf6683db6B902084cB0FFECe40Da);
+        routes[0] = IAerodromeRouter.Route(from, mid, false, 0x420DD381b31aEf6683db6B902084cB0FFECe40Da);
+        routes[1] = IAerodromeRouter.Route(mid, to, false, 0x420DD381b31aEf6683db6B902084cB0FFECe40Da);
         return routes;
     }
 
@@ -153,9 +161,7 @@ contract AerodromeBasketAdapterV1Test is Test {
         bytes memory data = _encodeRoutes(_singleRoute(WETH, TOSHI, false));
 
         vm.prank(manager);
-        vm.expectRevert(
-            abi.encodeWithSelector(AerodromeBasketAdapterV1.RouteTokenInMismatch.selector, USDC, WETH)
-        );
+        vm.expectRevert(abi.encodeWithSelector(AerodromeBasketAdapterV1.RouteTokenInMismatch.selector, USDC, WETH));
         adapter.swapExactInput(USDC, TOSHI, 100e6, 1, data);
     }
 
@@ -166,9 +172,7 @@ contract AerodromeBasketAdapterV1Test is Test {
         bytes memory data = _encodeRoutes(_singleRoute(USDC, AERO, false));
 
         vm.prank(manager);
-        vm.expectRevert(
-            abi.encodeWithSelector(AerodromeBasketAdapterV1.RouteTokenOutMismatch.selector, TOSHI, AERO)
-        );
+        vm.expectRevert(abi.encodeWithSelector(AerodromeBasketAdapterV1.RouteTokenOutMismatch.selector, TOSHI, AERO));
         adapter.swapExactInput(USDC, TOSHI, 100e6, 1, data);
     }
 
@@ -177,13 +181,11 @@ contract AerodromeBasketAdapterV1Test is Test {
     function test_Revert_BrokenChain() public {
         // Route 0: USDC → WETH, Route 1: AERO → BRETT (AERO != WETH).
         IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](2);
-        routes[0] = IAerodromeRouter.Route(USDC, WETH,  false, AERODROME_FACTORY);
+        routes[0] = IAerodromeRouter.Route(USDC, WETH, false, AERODROME_FACTORY);
         routes[1] = IAerodromeRouter.Route(AERO, BRETT, false, AERODROME_FACTORY); // broken
 
         vm.prank(manager);
-        vm.expectRevert(
-            abi.encodeWithSelector(AerodromeBasketAdapterV1.RouteChainBroken.selector, 1, WETH, AERO)
-        );
+        vm.expectRevert(abi.encodeWithSelector(AerodromeBasketAdapterV1.RouteChainBroken.selector, 1, WETH, AERO));
         adapter.swapExactInput(USDC, BRETT, 100e6, 1, abi.encode(routes));
     }
 
@@ -237,10 +239,7 @@ contract AerodromeBasketAdapterV1Test is Test {
         vm.prank(manager);
         vm.expectRevert(
             abi.encodeWithSelector(
-                AerodromeBasketAdapterV1.RouteFactoryNotAllowed.selector,
-                0,
-                AERODROME_FACTORY,
-                address(0xBEEF)
+                AerodromeBasketAdapterV1.RouteFactoryNotAllowed.selector, 0, AERODROME_FACTORY, address(0xBEEF)
             )
         );
         adapter.swapExactInput(USDC, TOSHI, 100e6, 1, abi.encode(routes));
@@ -264,8 +263,8 @@ contract AerodromeBasketAdapterV1Test is Test {
         vm.prank(manager);
         adapter.swapExactInput(USDC, BRETT, 100e6, 1, data);
 
-        assertEq(IERC20(USDC).balanceOf(address(adapter)),  0, "no USDC residual");
-        assertEq(IERC20(WETH).balanceOf(address(adapter)),  0, "no WETH residual");
+        assertEq(IERC20(USDC).balanceOf(address(adapter)), 0, "no USDC residual");
+        assertEq(IERC20(WETH).balanceOf(address(adapter)), 0, "no WETH residual");
         assertEq(IERC20(BRETT).balanceOf(address(adapter)), 0, "no BRETT residual");
     }
 }

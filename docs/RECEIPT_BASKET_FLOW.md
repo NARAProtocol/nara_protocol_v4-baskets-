@@ -26,7 +26,7 @@ weights from the market for each user.
 
 ```text
 User picks a basket.
-User pays an approved payment token (USDC or WETH).
+User pays USDC. Basket V1 does not allow ETH or WETH payment.
 Protocol buys the configured basket assets at current market execution.
 Protocol stores the exact bought amounts under one position id.
 User receives one ERC721 receipt.
@@ -94,7 +94,7 @@ name
 riskTier
 assets
 weightsBps
-approved payment tokens (USDC + WETH at launch)
+approved payment tokens (USDC only at Basket V1 launch)
 approved adapters (UniswapV3, AerodromeAMM, AerodromeSlipstream, PancakeSwapV3 — immutable)
 buyFeeBps
 sellFeeBps
@@ -121,7 +121,7 @@ sell NARA as part of the whole-basket exit.
 Sell outputs are intentionally narrow:
 
 ```text
-immutable allowed payment token, usually USDC
+immutable allowed payment token: USDC
 requiredAsset, which is NARA in production
 ```
 
@@ -236,9 +236,8 @@ Fallback path:
 ```text
 Only the literal receipt owner can call withdrawUnderlying (the manager disables approvals and requires msg.sender == ownerOf — no approved-operator path) when all underlying token contracts transfer normally.
 Manager clears accounting, decrements totalAccountedAsset, and burns the receipt.
-Manager charges withdrawFeeBps in-kind on each asset before transfer.
-Manager sends the fee portion per asset to feeRecipient.
-Manager sends the net portion per asset to receiver.
+Launch config requires withdrawFeeBps = 0.
+Manager sends the full recorded asset amount to receiver.
 receiver must not be the manager contract address.
 ```
 
@@ -276,8 +275,9 @@ Then:
 ```text
 buy fee token -> fee collector
 sell fee token -> fee collector
-withdraw fee token (per asset, in-kind) -> fee collector
-SWAPPER_ROLE swaps fee tokens to NARA or WETH
+withdraw and holding fees -> disabled at launch
+SWAPPER_ROLE converts USDC through typed oracle-bounded USDC/WETH routing
+held NARA -> direct engine deposit
 NARA -> engine.depositRewards
 WETH -> unwrap -> engine.notifyEthRewards
 ```

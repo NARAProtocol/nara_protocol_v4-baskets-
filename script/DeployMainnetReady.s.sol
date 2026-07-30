@@ -11,20 +11,25 @@ import {UniswapV4BasketAdapterV1} from "../src/adapters/UniswapV4BasketAdapterV1
 import {NARAIndexFeeCollectorV2} from "../src/NARAIndexFeeCollectorV2.sol";
 import {NARAImmutableBasketPositionManagerV1} from "../src/NARAImmutableBasketPositionManagerV1.sol";
 
-/// @notice Mainnet-ready deploy: V3 adapter + V2 fee collector + one launch basket.
+/// @notice Mainnet-ready deploy: five adapters + oracle-bounded V2 fee collector + one launch basket.
 /// @dev Use this script instead of DeployBaseMainnet.s.sol once the v4 core is live.
 ///
 ///      Required env:
 ///        PRIVATE_KEY                 — deployer EOA (ephemeral)
-///        ADMIN                       — Safe with timelock (required, not an EOA)
+///        ADMIN                       — contract Safe; fee-collector role admin
+///        SWAPPER                     — separate low-trust keeper address
+///        ROUTE_MANAGER               — separate contract timelock for delayed route changes
 ///        NARA_ENGINE                 — deployed NARAEngine v4
 ///        NARA                        — deployed NARA token v4
 ///        USDC                        — Base USDC 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 ///        WETH                        — Base WETH 0x4200000000000000000000000000000000000006
 ///        UNISWAP_V3_ROUTER02         — Base SwapRouter02 0x2626664c2603336E57B271c5C0b26F421741e481
 ///
-///      Required selector env (Uniswap V3 SwapRouter02.exactInputSingle):
-///        EXECUTOR_0_SELECTOR         — 0x04e45aaf
+///        USDC_USD_FEED               — reviewed Base Chainlink-compatible USDC/USD feed
+///        ETH_USD_FEED                — reviewed Base Chainlink-compatible ETH/USD feed
+///        FEE_SWAP_POOL_FEE           — direct USDC/WETH Uniswap v3 fee tier
+///        FEE_SWAP_MAX_ORACLE_AGE     — 300..172800 seconds
+///        FEE_SWAP_MAX_SLIPPAGE_BPS   — 0..500 bps
 ///
 ///      Per-basket env (only the first basket; subsequent baskets run separately):
 ///        BASKET_CATEGORY             — "CORE" | "AI" | "FINANCE" | "CULTURE"
@@ -32,9 +37,9 @@ import {NARAImmutableBasketPositionManagerV1} from "../src/NARAImmutableBasketPo
 ///        BASKET_DISPLAY_TIER         - neutral legacy metadata; do not display as advice
 ///        BASKET_BUY_FEE_BPS          — configured buy fee; cap 100
 ///        BASKET_SELL_FEE_BPS         — configured sell fee; cap 100
-///        BASKET_WITHDRAW_FEE_BPS     — optional; in-kind raw-withdraw fee; cap 100; defaults to sell fee
-///        BASKET_HOLDING_FEE_BPS      — required; annual in-kind holding fee; cap 200 (2%/yr); set 0 to disable
-///        BASKET_REFERRAL_SHARE_BPS   — required; referrer share of buy/sell fee; cap 5000 (50% of fee); set 0 to disable
+///        BASKET_WITHDRAW_FEE_BPS     — must be 0 at launch; avoids long-tail fee assets
+///        BASKET_HOLDING_FEE_BPS      — must be 0 at launch; avoids long-tail fee assets
+///        BASKET_REFERRAL_SHARE_BPS   — must be 0 at launch; avoids permissionless self-referral fee capture
 ///        BASKET_MAX_WEIGHT_DEV_BPS   — slippage budget; cap 1000
 ///        BASKET_MIN_NARA_WEIGHT_BPS  — cap 5000
 ///        BASKET_ASSETS               — comma-separated list, NARA must be first
@@ -43,8 +48,10 @@ contract DeployMainnetReady is Script {
     uint256 internal constant DEFAULT_MIN_INPUT_AMOUNT = 25_000_000; // 25 USDC
 
     error WrongChain(uint256 chainId);
-    error BadSelectorLength();
     error AdminIsDeployer();
+    error RolesMustDiffer();
+    error UnsupportedInKindFee();
+    error UnsupportedReferralShare();
     error BadExpectedAddress(string label, address expected, address actual);
     error AddressHasNoCode(string label, address target);
     error ArrayLengthMismatch(string label, uint256 expected, uint256 actual);
@@ -55,8 +62,12 @@ contract DeployMainnetReady is Script {
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(pk);
         address admin = vm.envAddress("ADMIN");
+        address swapper = vm.envAddress("SWAPPER");
+        address routeManager = vm.envAddress("ROUTE_MANAGER");
         if (admin == deployer) revert AdminIsDeployer();
+        if (admin == swapper || admin == routeManager || swapper == routeManager) revert RolesMustDiffer();
         _requireCode("ADMIN", admin);
+        _requireCode("ROUTE_MANAGER", routeManager);
         _requireCode("NARA_ENGINE", vm.envAddress("NARA_ENGINE"));
         _requireCode("NARA", vm.envAddress("NARA"));
         _requireCode("USDC", vm.envAddress("USDC"));
@@ -66,15 +77,13 @@ contract DeployMainnetReady is Script {
         vm.startBroadcast(pk);
 
         address[] memory adapters = _deployAdapters();
-        NARAIndexFeeCollectorV2 feeCollector = _deployFeeCollector(deployer);
-        NARAImmutableBasketPositionManagerV1 manager = _deployBasket(
-            vm.envAddress("NARA"), vm.envAddress("USDC"), vm.envAddress("WETH"), adapters, address(feeCollector)
-        );
-        _handoffRoles(feeCollector, admin, deployer);
+        NARAIndexFeeCollectorV2 feeCollector = _deployFeeCollector(admin, swapper, routeManager);
+        NARAImmutableBasketPositionManagerV1 manager =
+            _deployBasket(vm.envAddress("NARA"), vm.envAddress("USDC"), adapters, address(feeCollector));
 
         vm.stopBroadcast();
 
-        _logDeploy(deployer, admin, adapters, address(feeCollector), address(manager));
+        _logDeploy(deployer, admin, swapper, routeManager, adapters, address(feeCollector), address(manager));
     }
 
     /// @dev Deploys the full immutable adapter set so every basket can route across the top Base
@@ -107,52 +116,60 @@ contract DeployMainnetReady is Script {
         adapters[1] = address(new AerodromeBasketAdapterV1(aeroRouter, aeroFactory));
         adapters[2] = address(new AerodromeSlipstreamBasketAdapterV1(slipstreamRouter));
         adapters[3] = address(new PancakeV3BasketAdapterV1(pancakeRouter));
-        adapters[4] = address(new UniswapV4BasketAdapterV1(
-            universalRouter, permit2, v4Fee, v4TickSpacing, v4Hook
-        ));
+        adapters[4] = address(new UniswapV4BasketAdapterV1(universalRouter, permit2, v4Fee, v4TickSpacing, v4Hook));
     }
 
-    function _deployFeeCollector(address deployer) internal returns (NARAIndexFeeCollectorV2 feeCollector) {
+    function _deployFeeCollector(address admin, address swapper, address routeManager)
+        internal
+        returns (NARAIndexFeeCollectorV2 feeCollector)
+    {
         address router02 = vm.envAddress("UNISWAP_V3_ROUTER02");
-        bytes4 executor0Selector = _envSelector("EXECUTOR_0_SELECTOR");
         address naraEngine = vm.envAddress("NARA_ENGINE");
         address nara = vm.envAddress("NARA");
+        address usdc = vm.envAddress("USDC");
         address weth = vm.envAddress("WETH");
+        address usdcUsdFeed = vm.envAddress("USDC_USD_FEED");
+        address ethUsdFeed = vm.envAddress("ETH_USD_FEED");
         _requireCode("NARA_ENGINE", naraEngine);
         _requireCode("NARA", nara);
+        _requireCode("USDC", usdc);
         _requireCode("WETH", weth);
         _requireCode("UNISWAP_V3_ROUTER02", router02);
+        _requireCode("USDC_USD_FEED", usdcUsdFeed);
+        _requireCode("ETH_USD_FEED", ethUsdFeed);
 
-        address[] memory executors = new address[](1);
-        executors[0] = router02;
+        NARAIndexFeeCollectorV2.RouteConfig memory route = NARAIndexFeeCollectorV2.RouteConfig({
+            router: router02,
+            usdcUsdFeed: usdcUsdFeed,
+            ethUsdFeed: ethUsdFeed,
+            poolFee: uint24(vm.envUint("FEE_SWAP_POOL_FEE"))
+        });
         feeCollector = new NARAIndexFeeCollectorV2(
-            naraEngine, nara, weth, deployer, executors
+            naraEngine,
+            nara,
+            usdc,
+            weth,
+            admin,
+            swapper,
+            routeManager,
+            route,
+            uint48(vm.envUint("FEE_SWAP_MAX_ORACLE_AGE")),
+            uint16(vm.envUint("FEE_SWAP_MAX_SLIPPAGE_BPS"))
         );
-        feeCollector.setAllowedSelector(router02, executor0Selector, true);
-        feeCollector.freezeAllowlist();
-    }
-
-    function _handoffRoles(NARAIndexFeeCollectorV2 feeCollector, address admin, address deployer) internal {
-        feeCollector.grantRole(feeCollector.DEFAULT_ADMIN_ROLE(), admin);
-        feeCollector.grantRole(feeCollector.SWAPPER_ROLE(), admin);
-        feeCollector.grantRole(feeCollector.EXECUTOR_MANAGER_ROLE(), admin);
-
-        feeCollector.renounceRole(feeCollector.SWAPPER_ROLE(), deployer);
-        feeCollector.renounceRole(feeCollector.EXECUTOR_MANAGER_ROLE(), deployer);
-        feeCollector.renounceRole(feeCollector.DEFAULT_ADMIN_ROLE(), deployer);
     }
 
     function _logDeploy(
         address deployer,
         address admin,
+        address swapper,
+        address routeManager,
         address[] memory adapters,
         address feeCollector,
         address manager
     ) internal view {
         NARAImmutableBasketPositionManagerV1 liveManager = NARAImmutableBasketPositionManagerV1(manager);
         (
-            string memory basketName,
-            ,
+            string memory basketName,,
             uint16 buyFeeBps,
             uint16 sellFeeBps,
             uint16 maxWeightDeviationBps,
@@ -165,6 +182,8 @@ contract DeployMainnetReady is Script {
         console2.log("=== NARA Baskets Mainnet Ready Deploy ===");
         console2.log("Deployer", deployer);
         console2.log("Admin (Safe)", admin);
+        console2.log("Swapper", swapper);
+        console2.log("Route manager (timelock)", routeManager);
         console2.log("UniswapV3BasketAdapterV1", adapters[0]);
         console2.log("AerodromeBasketAdapterV1", adapters[1]);
         console2.log("AerodromeSlipstreamBasketAdapterV1", adapters[2]);
@@ -200,26 +219,14 @@ contract DeployMainnetReady is Script {
         }
     }
 
-    function _envSelector(string memory key) internal view returns (bytes4 selector) {
-        bytes memory raw = vm.envBytes(key);
-        if (raw.length != 4) revert BadSelectorLength();
-        assembly {
-            selector := mload(add(raw, 32))
-        }
-    }
-
-    function _deployBasket(
-        address nara,
-        address usdc,
-        address weth,
-        address[] memory adapters,
-        address feeCollector
-    ) internal returns (NARAImmutableBasketPositionManagerV1 manager) {
+    function _deployBasket(address nara, address usdc, address[] memory adapters, address feeCollector)
+        internal
+        returns (NARAImmutableBasketPositionManagerV1 manager)
+    {
         address[] memory assets = _parseAddressList(vm.envString("BASKET_ASSETS"));
         uint16[] memory weights = _parseUint16List(vm.envString("BASKET_WEIGHTS"));
         _requireCode("NARA", nara);
         _requireCode("USDC", usdc);
-        _requireCode("WETH", weth);
         _requireCode("FEE_COLLECTOR", feeCollector);
         for (uint256 i = 0; i < assets.length; i++) {
             _requireCode("BASKET_ASSET", assets[i]);
@@ -231,9 +238,11 @@ contract DeployMainnetReady is Script {
             revert BadExpectedAddress("BASKET_ASSETS[0]", nara, assets[0]);
         }
 
-        address[] memory paymentTokens = new address[](2);
+        // Basket V1 launches with USDC only. The canonical NARA adapter is a
+        // single-hop NARA/USDC adapter; allowing WETH would create an immutable
+        // payment path that reverts on the required NARA allocation.
+        address[] memory paymentTokens = new address[](1);
         paymentTokens[0] = usdc;
-        paymentTokens[1] = weth;
 
         NARAImmutableBasketPositionManagerV1.BasketDeploymentConfig memory config;
         config.categoryId = keccak256(bytes(vm.envString("BASKET_CATEGORY")));
@@ -245,9 +254,14 @@ contract DeployMainnetReady is Script {
         config.adapters = adapters;
         config.buyFeeBps = uint16(vm.envUint("BASKET_BUY_FEE_BPS"));
         config.sellFeeBps = uint16(vm.envUint("BASKET_SELL_FEE_BPS"));
-        config.withdrawFeeBps = uint16(vm.envOr("BASKET_WITHDRAW_FEE_BPS", vm.envUint("BASKET_SELL_FEE_BPS")));
-        config.holdingFeeBps = uint16(vm.envUint("BASKET_HOLDING_FEE_BPS"));
-        config.referralShareBps = uint16(vm.envUint("BASKET_REFERRAL_SHARE_BPS"));
+        uint256 withdrawFeeBps = vm.envOr("BASKET_WITHDRAW_FEE_BPS", uint256(0));
+        uint256 holdingFeeBps = vm.envOr("BASKET_HOLDING_FEE_BPS", uint256(0));
+        if (withdrawFeeBps != 0 || holdingFeeBps != 0) revert UnsupportedInKindFee();
+        config.withdrawFeeBps = 0;
+        config.holdingFeeBps = 0;
+        uint256 referralShareBps = vm.envOr("BASKET_REFERRAL_SHARE_BPS", uint256(0));
+        if (referralShareBps != 0) revert UnsupportedReferralShare();
+        config.referralShareBps = 0;
         config.maxWeightDeviationBps = uint16(vm.envUint("BASKET_MAX_WEIGHT_DEV_BPS"));
         config.minInputAmount = vm.envOr("BASKET_MIN_INPUT_AMOUNT", DEFAULT_MIN_INPUT_AMOUNT);
         config.feeRecipient = feeCollector;
@@ -256,11 +270,7 @@ contract DeployMainnetReady is Script {
         uint16 minNaraWeight = uint16(vm.envUint("BASKET_MIN_NARA_WEIGHT_BPS"));
 
         manager = new NARAImmutableBasketPositionManagerV1(
-            vm.envString("BASKET_NAME"),
-            "NARABP",
-            nara,
-            minNaraWeight,
-            config
+            vm.envString("BASKET_NAME"), "NARABP", nara, minNaraWeight, config
         );
     }
 

@@ -8,10 +8,18 @@ import {NARAImmutableBasketPositionManagerV1} from "../src/NARAImmutableBasketPo
 interface IFeeCollectorV2Verify {
     function engine() external view returns (address);
     function nara() external view returns (address);
+    function usdc() external view returns (address);
     function weth() external view returns (address);
-    function allowedExecutor(address executor) external view returns (bool);
-    function allowedSelector(address executor, bytes4 selector) external view returns (bool);
-    function allowlistFrozen() external view returns (bool);
+    function maxOracleAge() external view returns (uint48);
+    function maxSlippageBps() external view returns (uint16);
+    function routeConfig()
+        external
+        view
+        returns (address router, address usdcUsdFeed, address ethUsdFeed, uint24 poolFee);
+    function DEFAULT_ADMIN_ROLE() external view returns (bytes32);
+    function SWAPPER_ROLE() external view returns (bytes32);
+    function ROUTE_MANAGER_ROLE() external view returns (bytes32);
+    function hasRole(bytes32 role, address account) external view returns (bool);
 }
 
 /// @notice Launch gate for one deployed immutable basket manager.
@@ -30,6 +38,7 @@ contract VerifyDeployedBasket is Script {
     error BoolMismatch(string label);
     error LengthMismatch(string label, uint256 expected, uint256 actual);
     error RetiredAddress(string label, address target);
+    error CodeHashMismatch(string label, bytes32 expected, bytes32 actual);
 
     function run() external {
         uint256 expectedChainId = vm.envOr("EXPECTED_CHAIN_ID", block.chainid);
@@ -44,9 +53,15 @@ contract VerifyDeployedBasket is Script {
         address expectedFeeRecipient = vm.envAddress("EXPECTED_FEE_RECIPIENT");
         address expectedRequiredAssetAdapter = vm.envAddress("EXPECTED_REQUIRED_ASSET_ADAPTER");
         address expectedEngine = vm.envAddress("EXPECTED_ENGINE");
+        address expectedUsdc = vm.envAddress("EXPECTED_USDC");
         address expectedWeth = vm.envAddress("EXPECTED_WETH");
-        address expectedExecutor = vm.envAddress("EXPECTED_EXECUTOR");
-        bytes4 expectedExecutorSelector = _envSelector("EXPECTED_EXECUTOR_SELECTOR");
+        address expectedAdmin = vm.envAddress("EXPECTED_ADMIN");
+        address expectedSwapper = vm.envAddress("EXPECTED_SWAPPER");
+        address expectedRouteManager = vm.envAddress("EXPECTED_ROUTE_MANAGER");
+        address expectedRouter = vm.envAddress("EXPECTED_ROUTER");
+        address expectedUsdcUsdFeed = vm.envAddress("EXPECTED_USDC_USD_FEED");
+        address expectedEthUsdFeed = vm.envAddress("EXPECTED_ETH_USD_FEED");
+        uint24 expectedPoolFee = uint24(vm.envUint("EXPECTED_FEE_SWAP_POOL_FEE"));
         address[] memory expectedAssets = _parseAddressList(vm.envString("EXPECTED_ASSETS"));
         uint16[] memory expectedWeights = _parseUint16List(vm.envString("EXPECTED_WEIGHTS"));
         address[] memory expectedPaymentTokens = _parseAddressList(vm.envString("EXPECTED_PAYMENT_TOKENS"));
@@ -71,11 +86,14 @@ contract VerifyDeployedBasket is Script {
         _eq("basket.displayTier", vm.envUint("EXPECTED_DISPLAY_TIER"), displayTier);
         _eq("basket.buyFeeBps", vm.envUint("EXPECTED_BUY_FEE_BPS"), buyFeeBps);
         _eq("basket.sellFeeBps", vm.envUint("EXPECTED_SELL_FEE_BPS"), sellFeeBps);
+        _requireLaunchFeesZero(manager.withdrawFeeBps(), manager.holdingFeeBps(), manager.referralShareBps());
         _eq("withdrawFeeBps", vm.envUint("EXPECTED_WITHDRAW_FEE_BPS"), manager.withdrawFeeBps());
         _eq("holdingFeeBps", vm.envUint("EXPECTED_HOLDING_FEE_BPS"), manager.holdingFeeBps());
         _eq("referralShareBps", vm.envUint("EXPECTED_REFERRAL_SHARE_BPS"), manager.referralShareBps());
         _eq("basket.maxWeightDeviationBps", vm.envUint("EXPECTED_MAX_WEIGHT_DEV_BPS"), maxWeightDeviationBps);
-        _eq("minRequiredAssetWeightBps", vm.envUint("EXPECTED_MIN_NARA_WEIGHT_BPS"), manager.minRequiredAssetWeightBps());
+        _eq(
+            "minRequiredAssetWeightBps", vm.envUint("EXPECTED_MIN_NARA_WEIGHT_BPS"), manager.minRequiredAssetWeightBps()
+        );
         _eq(
             "minInputAmount",
             vm.envOr("EXPECTED_MIN_INPUT_AMOUNT", DEFAULT_EXPECTED_MIN_INPUT_AMOUNT),
@@ -85,16 +103,34 @@ contract VerifyDeployedBasket is Script {
         _requireCode("EXPECTED_FEE_RECIPIENT", expectedFeeRecipient);
         _requireCode("EXPECTED_REQUIRED_ASSET_ADAPTER", expectedRequiredAssetAdapter);
         _requireCode("EXPECTED_ENGINE", expectedEngine);
+        _requireCode("EXPECTED_USDC", expectedUsdc);
         _requireCode("EXPECTED_WETH", expectedWeth);
-        _requireCode("EXPECTED_EXECUTOR", expectedExecutor);
+        _requireCode("EXPECTED_ADMIN", expectedAdmin);
+        _requireCode("EXPECTED_ROUTE_MANAGER", expectedRouteManager);
+        _requireCode("EXPECTED_ROUTER", expectedRouter);
+        _requireCode("EXPECTED_USDC_USD_FEED", expectedUsdcUsdFeed);
+        _requireCode("EXPECTED_ETH_USD_FEED", expectedEthUsdFeed);
+        _requireCodeHash(
+            "EXPECTED_FEE_RECIPIENT_CODEHASH", expectedFeeRecipient, vm.envBytes32("EXPECTED_FEE_RECIPIENT_CODEHASH")
+        );
 
         IFeeCollectorV2Verify feeCollector = IFeeCollectorV2Verify(expectedFeeRecipient);
         _eq("feeCollector.engine", expectedEngine, feeCollector.engine());
         _eq("feeCollector.nara", expectedNara, feeCollector.nara());
+        _eq("feeCollector.usdc", expectedUsdc, feeCollector.usdc());
         _eq("feeCollector.weth", expectedWeth, feeCollector.weth());
-        _true("feeCollector.executorAllowed", feeCollector.allowedExecutor(expectedExecutor));
-        _true("feeCollector.selectorAllowed", feeCollector.allowedSelector(expectedExecutor, expectedExecutorSelector));
-        _true("feeCollector.allowlistFrozen", feeCollector.allowlistFrozen());
+        _eq("feeCollector.maxOracleAge", vm.envUint("EXPECTED_MAX_ORACLE_AGE"), feeCollector.maxOracleAge());
+        _eq("feeCollector.maxSlippageBps", vm.envUint("EXPECTED_MAX_SLIPPAGE_BPS"), feeCollector.maxSlippageBps());
+        (address router, address usdcUsdFeed, address ethUsdFeed, uint24 poolFee) = feeCollector.routeConfig();
+        _eq("feeCollector.route.router", expectedRouter, router);
+        _eq("feeCollector.route.usdcUsdFeed", expectedUsdcUsdFeed, usdcUsdFeed);
+        _eq("feeCollector.route.ethUsdFeed", expectedEthUsdFeed, ethUsdFeed);
+        _eq("feeCollector.route.poolFee", expectedPoolFee, poolFee);
+        _true("feeCollector.admin", feeCollector.hasRole(feeCollector.DEFAULT_ADMIN_ROLE(), expectedAdmin));
+        _true("feeCollector.swapper", feeCollector.hasRole(feeCollector.SWAPPER_ROLE(), expectedSwapper));
+        _true(
+            "feeCollector.routeManager", feeCollector.hasRole(feeCollector.ROUTE_MANAGER_ROLE(), expectedRouteManager)
+        );
 
         if (manager.configHash() == bytes32(0)) revert Bytes32Mismatch("configHash", bytes32(uint256(1)), bytes32(0));
 
@@ -134,6 +170,17 @@ contract VerifyDeployedBasket is Script {
         if (target.code.length == 0) revert AddressHasNoCode(label, target);
     }
 
+    function _requireCodeHash(string memory label, address target, bytes32 expected) internal view {
+        bytes32 actual = target.codehash;
+        if (actual != expected) revert CodeHashMismatch(label, expected, actual);
+    }
+
+    function _requireLaunchFeesZero(uint16 withdrawFee, uint16 holdingFee, uint16 referralShare) internal pure {
+        _eq("launch.withdrawFeeBps", 0, withdrawFee);
+        _eq("launch.holdingFeeBps", 0, holdingFee);
+        _eq("launch.referralShareBps", 0, referralShare);
+    }
+
     function _eq(string memory label, address expected, address actual) internal pure {
         if (expected != actual) revert AddressMismatch(label, expected, actual);
     }
@@ -156,14 +203,6 @@ contract VerifyDeployedBasket is Script {
 
     function _rejectRetired(string memory label, address target) internal pure {
         if (target == RETIRED_V3_NARA || target == RETIRED_V3_ENGINE) revert RetiredAddress(label, target);
-    }
-
-    function _envSelector(string memory key) internal view returns (bytes4 selector) {
-        bytes memory raw = vm.envBytes(key);
-        if (raw.length != 4) revert LengthMismatch(key, 4, raw.length);
-        assembly ("memory-safe") {
-            selector := mload(add(raw, 32))
-        }
     }
 
     function _eqAddressArray(string memory label, address[] memory expected, address[] memory actual) internal pure {

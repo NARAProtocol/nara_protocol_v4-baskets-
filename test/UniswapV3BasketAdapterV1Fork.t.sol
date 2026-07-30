@@ -13,11 +13,11 @@ import {UniswapV3BasketAdapterV1} from "../src/adapters/UniswapV3BasketAdapterV1
 contract UniswapV3BasketAdapterV1ForkTest is Test {
     // ─── Base mainnet addresses ────────────────────────────────────────────────
     address constant SWAP_ROUTER_02 = 0x2626664c2603336E57B271c5C0b26F421741e481; // Uniswap V3 SwapRouter02 (Base)
-    address constant USDC  = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address constant WETH  = 0x4200000000000000000000000000000000000006;
+    address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address constant WETH = 0x4200000000000000000000000000000000000006;
     address constant cbBTC = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
 
-    uint24 constant FEE_005 = 500;  // 0.05% tier (USDC/WETH, USDC/cbBTC deep liquidity on Base)
+    uint24 constant FEE_005 = 500; // 0.05% tier (USDC/WETH, USDC/cbBTC deep liquidity on Base)
 
     UniswapV3BasketAdapterV1 adapter;
     address manager = makeAddr("manager");
