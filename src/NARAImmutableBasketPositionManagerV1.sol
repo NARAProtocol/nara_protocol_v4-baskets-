@@ -5,6 +5,7 @@ import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 interface INARABasketSwapAdapterV1 {
     function swapExactInput(
@@ -38,6 +39,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
     error EmptyAdapters();
     error LengthMismatch();
     error ZeroAddress();
+    error NotAContract(address target);
     error ZeroAmount();
     error ZeroCategoryId();
     error DuplicateAsset();
@@ -179,6 +181,9 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
     mapping(uint256 => uint64) public lastHoldingAccrualAt;
     mapping(uint256 => address) public referrerOf;
     mapping(uint256 => mapping(address => uint256)) public holdingFeeRemainder;
+    mapping(uint256 => mapping(address => uint256)) private _holdingFeeBasis;
+    mapping(uint256 => mapping(address => uint256)) private _holdingFeeCharged;
+    mapping(uint256 => mapping(address => uint64)) private _holdingFeeStartedAt;
 
     mapping(address => uint256) public protocolFeeAccrued;
 
@@ -263,6 +268,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
         if (requiredAsset_ == address(0) || config.feeRecipient == address(0) || config.feeRecipient == address(this)) {
             revert ZeroAddress();
         }
+        if (requiredAsset_.code.length == 0) revert NotAContract(requiredAsset_);
 
         if (config.categoryId == bytes32(0)) revert ZeroCategoryId();
 
@@ -312,6 +318,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             address asset = config.assets[i];
 
             if (asset == address(0)) revert ZeroAddress();
+            if (asset.code.length == 0) revert NotAContract(asset);
             if (config.weightsBps[i] == 0) revert BadWeights();
             if (_assetIndexPlusOne[asset] != 0) revert DuplicateAsset();
 
@@ -337,6 +344,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             address token = config.paymentTokens[i];
 
             if (token == address(0)) revert ZeroAddress();
+            if (token.code.length == 0) revert NotAContract(token);
             if (paymentTokenAllowed[token]) revert DuplicatePaymentToken();
 
             paymentTokenAllowed[token] = true;
@@ -350,6 +358,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             address adapter = config.adapters[i];
 
             if (adapter == address(0)) revert ZeroAddress();
+            if (adapter.code.length == 0) revert NotAContract(adapter);
             if (adapterAllowed[adapter]) revert DuplicateAdapter();
 
             adapterAllowed[adapter] = true;
@@ -429,19 +438,11 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
     function assetSolvency(address asset)
         external
         view
-        returns (
-            uint256 balance,
-            uint256 accounted,
-            bool solvent,
-            uint256 surplusOrDeficit
-        )
+        returns (uint256 balance, uint256 accounted, bool solvent, uint256 surplusOrDeficit)
     {
         balance = IERC20(asset).balanceOf(address(this));
 
-        accounted =
-            totalAccountedAsset[asset]
-            + protocolFeeAccrued[asset]
-            + totalReferralRewardsByToken[asset];
+        accounted = totalAccountedAsset[asset] + protocolFeeAccrued[asset] + totalReferralRewardsByToken[asset];
 
         if (balance >= accounted) {
             solvent = true;
@@ -539,11 +540,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
 
             if (amountInUsed != instruction.amountIn) {
                 revert NonExactSwap(
-                    instruction.tokenIn,
-                    instruction.tokenOut,
-                    instruction.amountIn,
-                    amountInUsed,
-                    amountOut
+                    instruction.tokenIn, instruction.tokenOut, instruction.amountIn, amountInUsed, amountOut
                 );
             }
 
@@ -582,6 +579,8 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
 
             positionAmountOf[tokenId][_assets[i]] = amountsBought[i];
             totalAccountedAsset[_assets[i]] += amountsBought[i];
+            _holdingFeeBasis[tokenId][_assets[i]] = amountsBought[i];
+            _holdingFeeStartedAt[tokenId][_assets[i]] = uint64(block.timestamp);
         }
 
         _payFee(params.paymentToken, tokenId, referrer, feeAmount);
@@ -667,11 +666,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
 
             if (amountInUsed != instruction.amountIn) {
                 revert NonExactSwap(
-                    instruction.tokenIn,
-                    instruction.tokenOut,
-                    instruction.amountIn,
-                    amountInUsed,
-                    amountOut
+                    instruction.tokenIn, instruction.tokenOut, instruction.amountIn, amountInUsed, amountOut
                 );
             }
         }
@@ -704,15 +699,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
         _payFee(params.outputToken, params.tokenId, referrer, feeAmount);
         _sendExact(params.outputToken, params.receiver, netOutput);
 
-        emit BasketSold(
-            owner,
-            params.receiver,
-            categoryId,
-            params.tokenId,
-            params.outputToken,
-            grossOutput,
-            feeAmount
-        );
+        emit BasketSold(owner, params.receiver, categoryId, params.tokenId, params.outputToken, grossOutput, feeAmount);
     }
 
     function sellBasketPartial(PartialSellParams calldata params)
@@ -797,11 +784,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
 
             if (amountInUsed != instruction.amountIn) {
                 revert NonExactSwap(
-                    instruction.tokenIn,
-                    instruction.tokenOut,
-                    instruction.amountIn,
-                    amountInUsed,
-                    amountOut
+                    instruction.tokenIn, instruction.tokenOut, instruction.amountIn, amountInUsed, amountOut
                 );
             }
         }
@@ -831,14 +814,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
         _sendExact(params.outputToken, params.receiver, netOutput);
 
         emit BasketPartiallySold(
-            owner,
-            params.receiver,
-            categoryId,
-            params.tokenId,
-            params.outputToken,
-            grossOutput,
-            feeAmount,
-            closed
+            owner, params.receiver, categoryId, params.tokenId, params.outputToken, grossOutput, feeAmount, closed
         );
     }
 
@@ -977,15 +953,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             }
         }
 
-        emit UnderlyingPartiallyWithdrawn(
-            owner,
-            receiver,
-            tokenId,
-            assetsToWithdraw,
-            amounts,
-            feeAmounts,
-            closed
-        );
+        emit UnderlyingPartiallyWithdrawn(owner, receiver, tokenId, assetsToWithdraw, amounts, feeAmounts, closed);
     }
 
     function accrueHoldingFee(uint256[] calldata tokenIds) external nonReentrant {
@@ -1048,9 +1016,9 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
 
         if (last == 0) return;
 
-        uint256 elapsed = block.timestamp - last;
+        uint256 elapsedSinceLastAccrual = block.timestamp - last;
 
-        if (elapsed == 0) return;
+        if (elapsedSinceLastAccrual == 0) return;
 
         uint256 len = _assets.length;
         uint256[] memory feeAmounts = new uint256[](len);
@@ -1063,9 +1031,21 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
 
             if (amount == 0) continue;
 
-            uint256 rawFee = amount * feeBps * elapsed + holdingFeeRemainder[tokenId][asset];
-            uint256 fee = rawFee / denominator;
-            uint256 remainder = rawFee % denominator;
+            uint256 basis = _holdingFeeBasis[tokenId][asset];
+            uint64 startedAt = _holdingFeeStartedAt[tokenId][asset];
+            if (basis == 0 || startedAt == 0) {
+                basis = amount;
+                startedAt = last;
+                _holdingFeeBasis[tokenId][asset] = basis;
+                _holdingFeeStartedAt[tokenId][asset] = startedAt;
+            }
+
+            uint256 elapsed = block.timestamp - startedAt;
+            uint256 multiplier = uint256(feeBps) * elapsed;
+            uint256 cumulativeFee = Math.mulDiv(basis, multiplier, denominator);
+            uint256 remainder = mulmod(basis, multiplier, denominator);
+            uint256 alreadyCharged = _holdingFeeCharged[tokenId][asset];
+            uint256 fee = cumulativeFee > alreadyCharged ? cumulativeFee - alreadyCharged : 0;
 
             if (fee > amount) {
                 fee = amount;
@@ -1076,6 +1056,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
 
             if (fee == 0) continue;
 
+            _holdingFeeCharged[tokenId][asset] = alreadyCharged + fee;
             positionAmountOf[tokenId][asset] = amount - fee;
             totalAccountedAsset[asset] -= fee;
             protocolFeeAccrued[asset] += fee;
@@ -1091,7 +1072,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
         if (any) {
             // The event mirrors uint64 timestamp storage; timestamps above uint64 are outside launch assumptions.
             // forge-lint: disable-next-line(unsafe-typecast)
-            emit HoldingFeeAccrued(tokenId, uint64(elapsed), feeAmounts);
+            emit HoldingFeeAccrued(tokenId, uint64(elapsedSinceLastAccrual), feeAmounts);
         }
     }
 
@@ -1125,8 +1106,8 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
     {
         if (!adapterAllowed[instruction.adapter]) revert AdapterNotAllowed();
         if (
-            (instruction.tokenIn == requiredAsset || instruction.tokenOut == requiredAsset) &&
-            instruction.adapter != requiredAssetAdapter
+            (instruction.tokenIn == requiredAsset || instruction.tokenOut == requiredAsset)
+                && instruction.adapter != requiredAssetAdapter
         ) {
             revert AdapterNotAllowed();
         }
@@ -1155,13 +1136,14 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
 
         tokenIn.forceApprove(instruction.adapter, instruction.amountIn);
 
-        (amountInUsed, amountOut) = INARABasketSwapAdapterV1(instruction.adapter).swapExactInput(
-            instruction.tokenIn,
-            instruction.tokenOut,
-            instruction.amountIn,
-            instruction.minAmountOut,
-            instruction.data
-        );
+        (amountInUsed, amountOut) = INARABasketSwapAdapterV1(instruction.adapter)
+            .swapExactInput(
+                instruction.tokenIn,
+                instruction.tokenOut,
+                instruction.amountIn,
+                instruction.minAmountOut,
+                instruction.data
+            );
 
         tokenIn.forceApprove(instruction.adapter, 0);
 
@@ -1176,13 +1158,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
         uint256 actualOut = outAfter - outBefore;
 
         if (actualIn != amountInUsed || actualOut != amountOut || actualOut < instruction.minAmountOut) {
-            revert NonExactSwap(
-                instruction.tokenIn,
-                instruction.tokenOut,
-                instruction.amountIn,
-                actualIn,
-                actualOut
-            );
+            revert NonExactSwap(instruction.tokenIn, instruction.tokenOut, instruction.amountIn, actualIn, actualOut);
         }
     }
 
@@ -1195,12 +1171,7 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             uint256 maxAllowed = target + tolerance;
 
             if (budgetAllocated[i] < minAllowed || budgetAllocated[i] > maxAllowed) {
-                revert AllocationOutOfBounds(
-                    _assets[i],
-                    budgetAllocated[i],
-                    minAllowed,
-                    maxAllowed
-                );
+                revert AllocationOutOfBounds(_assets[i], budgetAllocated[i], minAllowed, maxAllowed);
             }
         }
     }
@@ -1216,6 +1187,9 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             uint256 amount = positionAmountOf[tokenId][asset];
 
             delete holdingFeeRemainder[tokenId][asset];
+            delete _holdingFeeBasis[tokenId][asset];
+            delete _holdingFeeCharged[tokenId][asset];
+            delete _holdingFeeStartedAt[tokenId][asset];
 
             if (amount == 0) continue;
 
@@ -1244,10 +1218,21 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
             if (amount == current) {
                 delete positionAmountOf[tokenId][asset];
                 delete holdingFeeRemainder[tokenId][asset];
+                delete _holdingFeeBasis[tokenId][asset];
+                delete _holdingFeeCharged[tokenId][asset];
+                delete _holdingFeeStartedAt[tokenId][asset];
             } else {
                 positionAmountOf[tokenId][asset] = current - amount;
+                _resetHoldingFeeCheckpoint(tokenId, asset);
             }
         }
+    }
+
+    function _resetHoldingFeeCheckpoint(uint256 tokenId, address asset) internal {
+        _holdingFeeBasis[tokenId][asset] = positionAmountOf[tokenId][asset];
+        _holdingFeeCharged[tokenId][asset] = 0;
+        _holdingFeeStartedAt[tokenId][asset] = uint64(block.timestamp);
+        holdingFeeRemainder[tokenId][asset] = 0;
     }
 
     function _closePositionIfEmpty(uint256 tokenId) internal returns (bool closed) {
@@ -1263,7 +1248,11 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
         delete referrerOf[tokenId];
 
         for (uint256 i = 0; i < _assets.length; i++) {
-            delete holdingFeeRemainder[tokenId][_assets[i]];
+            address asset = _assets[i];
+            delete holdingFeeRemainder[tokenId][asset];
+            delete _holdingFeeBasis[tokenId][asset];
+            delete _holdingFeeCharged[tokenId][asset];
+            delete _holdingFeeStartedAt[tokenId][asset];
         }
 
         _burn(tokenId);
@@ -1315,26 +1304,30 @@ contract NARAImmutableBasketPositionManagerV1 is ERC721, ReentrancyGuard {
         BasketDeploymentConfig memory config
     ) private pure returns (bytes32) {
         bytes32 identityHash = keccak256(abi.encode(name_, symbol_, requiredAsset_, minRequiredAssetWeightBps_));
-        bytes32 basketHash = keccak256(abi.encode(
-            config.categoryId,
-            config.basketName,
-            config.displayTier,
-            config.assets,
-            config.weightsBps,
-            config.paymentTokens,
-            config.adapters,
-            config.requiredAssetAdapter
-        ));
-        bytes32 feeHash = keccak256(abi.encode(
-            config.buyFeeBps,
-            config.sellFeeBps,
-            config.withdrawFeeBps,
-            config.holdingFeeBps,
-            config.referralShareBps,
-            config.maxWeightDeviationBps,
-            config.minInputAmount,
-            config.feeRecipient
-        ));
+        bytes32 basketHash = keccak256(
+            abi.encode(
+                config.categoryId,
+                config.basketName,
+                config.displayTier,
+                config.assets,
+                config.weightsBps,
+                config.paymentTokens,
+                config.adapters,
+                config.requiredAssetAdapter
+            )
+        );
+        bytes32 feeHash = keccak256(
+            abi.encode(
+                config.buyFeeBps,
+                config.sellFeeBps,
+                config.withdrawFeeBps,
+                config.holdingFeeBps,
+                config.referralShareBps,
+                config.maxWeightDeviationBps,
+                config.minInputAmount,
+                config.feeRecipient
+            )
+        );
         return keccak256(abi.encode(identityHash, basketHash, feeHash));
     }
 }

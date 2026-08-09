@@ -1,0 +1,38 @@
+name: Engineering proposal
+description: Propose a scoped basket, integration, verification, app, or documentation improvement.
+title: "proposal: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the developer or protocol problem without price or investment framing.
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behavior and evidence
+      description: Cite exact source, tests, documentation, manifests, or observed Base state.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Threat-model and compatibility impact
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+    validations:
+      required: true

@@ -1,55 +1,112 @@
-# Security Policy
+# Security policy
 
 ## Status
 
-**Pre-launch — no contracts are deployed to mainnet.** Once deployed, verified addresses will be
-published in [`docs/DEPLOYMENT_MANIFEST.md`](docs/DEPLOYMENT_MANIFEST.md).
+The NARA basket stack is pre-launch. No basket manager, adapter set, or fee collector is
+published as a Base mainnet deployment. The app is preview-only until verified
+deployment manifests and production environment parity pass.
+
+No independent audit is claimed. Automated analysis and internal review cannot
+guarantee the absence of defects.
+
+## Supported scope
+
+Security fixes are accepted for the current default branch and the latest
+maintainer-designated release candidate.
+
+In scope:
+
+- `src/NARAImmutableBasketPositionManagerV1.sol`
+- `src/NARAIndexFeeCollectorV2.sol`
+- every adapter under `src/adapters/`
+- `script/DeployMainnetReady.s.sol`
+- `script/VerifyDeployedBasket.s.sol`
+- app transaction builders, manifest gates, and value-bearing flows under `app/`
+
+Reference-only contracts such as `NARAIndexFeeCollectorV1` and
+`CategoryIndexSuiteV1` are not part of the receipt-basket launch deployment.
 
 ## Security model
 
-NARA Baskets is designed to **remove trust surfaces** rather than add them:
+- **Immutable receipt manager.** It has no owner, pause, upgrade path, admin
+  sweep, or mutable basket configuration.
+- **Owner-only receipt actions.** Approval-based operators are disabled. The
+  literal receipt owner controls sell and withdrawal actions.
+- **Exact accounting.** The manager and adapters compare real balance deltas,
+  reject non-exact inputs, and enforce minimum output.
+- **Canonical NARA pool.** The required v4 adapter pins the fee, tick spacing,
+  and hook in constructor immutables and rejects dynamic route data.
+- **DEX-independent withdrawal.** Recorded assets can be requested without a
+  swap or keeper. A component token that blocks its own transfer can still block
+  that token; selected-asset withdrawal keeps unaffected assets recoverable.
+- **Constrained fee collector.** USDC conversion uses one typed route with a
+  Base sequencer recovery grace period, fresh positive price rounds, a USDC
+  depeg bound, oracle-derived minimum output, exact spend/output checks, and
+  atomic engine notification. NARA reward deposits verify the engine binding
+  and exact token pull.
+- **Separated authority.** Admin, swapper, and route manager are distinct. Route
+  replacement is delayed for two days and can be cancelled by the independent
+  admin guardian.
+- **Fail-closed app.** Missing or mismatched deployment state, NARA pool
+  configuration, depth, status, or manifests must keep buying disabled.
 
-- **Immutable by construction** — the receipt manager and adapters have no owner, no pause, no
-  upgradeability, and no admin sweep. Basket config (assets, weights, fees, adapters, `feeRecipient`)
-  is fixed in the constructor and can never change.
-- **Always-available exit** — holders can withdraw their exact underlying tokens unconditionally,
-  independent of any keeper or DEX availability.
-- **Constrained fee collector** — the only role-gated component routes fees to the NARA engine through
-  an allowlisted executor and an explicit 4-byte selector. It cannot touch user positions, and
-  multicall/batch selectors are not permitted.
-- **Exact-accounting adapters** — each adapter moves exactly the accounted balance delta; no admin,
-  no upgrade.
+## Verification evidence
 
-## Verification performed
+The dated, reproducible evidence ledger is
+[`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md). The repository CI
+includes:
 
-- **136 tests passing** — unit, fuzz, and invariant suites (`forge test`).
-- **Static analysis** — Slither, clean of new issues on the basket contracts.
-- **Pre-deploy gate** — [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md) must pass before
-  any mainnet value.
+- repository integrity, local-link, JSON, submodule, secret-pattern, and Action
+  SHA checks;
+- formatting, bytecode-size, deterministic, fuzz, and invariant contract gates;
+- app builder, copy, parity, type, build, and High/Critical dependency gates;
+- Slither and Aderyn advisory analysis;
+- CodeQL for the JavaScript/TypeScript app;
+- a manual Base adapter fork gate that fails when its RPC secret is absent.
 
-Automated analysis is necessary but not sufficient. An independent human / competitive review is
-planned before mainnet deployment; automated tooling cannot catch economic or logic flaws that were
-never encoded as a property.
+`ForkBuyProof` remains a required pre-deployment rehearsal against a candidate
+stack on a local Base fork.
+
+## Known trust and availability limits
+
+- Basket composition and routes are permanent after manager deployment.
+- The fee collector depends on its configured router, price feeds, WETH, and
+  NARA engine.
+- A compromised swapper cannot change the route but can choose when to execute
+  an allowed conversion.
+- A compromised route manager can queue a route change, but cannot bypass the
+  delay or the independent admin's affirmative execution.
+- Third-party token, oracle, router, pool, and RPC behavior is outside NARA's
+  control.
+- Thin liquidity, stale quotes, MEV, token transfer restrictions, or venue
+  downtime can cause transactions to revert or produce poor execution within
+  the user's stated limits.
+- Immutability removes recovery powers as well as administrative risk.
 
 ## Reporting a vulnerability
 
-Please report security issues **privately** — do not open a public issue for an exploitable bug.
+Report suspected vulnerabilities privately. Do not open a public issue, pull
+request, discussion, or social-media thread for an unresolved exploit.
 
 - Email: **security@naraprotocol.pro**
-- Include: affected contract + line, a description, and a reproducing transaction sequence if possible.
+- Include the affected commit and contract or app file.
+- Include exact file and line references.
+- Include prerequisites, impact, and a reproducing transaction or test sequence
+  when possible.
+- Do not include private keys, seed phrases, wallet files, private RPC URLs, or
+  unnecessary personal information.
 
-We aim to acknowledge reports within 72 hours. A formal bug-bounty program will be announced ahead of
-mainnet launch.
+The maintainers will validate the report, coordinate remediation, and agree on
+disclosure timing before public discussion. No bounty, payment, or response-time
+guarantee is offered unless a separate published program explicitly states it.
 
-## Links
+## Safe-harbor intent
 
-- Website: **https://naraprotocol.pro**
-- Farcaster: **@naraprotocol**
-- X / Twitter: **[@NARA_protocol](https://x.com/NARA_protocol)**
-- Security contact: **security@naraprotocol.pro**
+Good-faith research should avoid privacy violations, service disruption,
+unnecessary extraction of value, and access beyond what is required to
+demonstrate the issue. Use local tests or a fork whenever possible.
 
-## Scope
+## Contact
 
-In scope: every contract under [`src/`](src/) marked **canonical** in the
-[README](README.md#-contracts). Reference-only contracts (the mutable manager, V1 fee collector, and
-the static vault suite) are **not** intended for production deployment.
+- Website: [naraprotocol.pro](https://naraprotocol.pro)
+- Security email: [security@naraprotocol.pro](mailto:security@naraprotocol.pro)

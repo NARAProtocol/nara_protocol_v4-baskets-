@@ -13,6 +13,7 @@ import {PancakeV3BasketAdapterV1, IPancakeV3SwapRouter} from "../src/adapters/Pa
 
 contract MockToken is ERC20 {
     constructor(string memory n, string memory s) ERC20(n, s) {}
+
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }

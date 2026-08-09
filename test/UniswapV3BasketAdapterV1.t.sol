@@ -8,7 +8,10 @@ import {UniswapV3BasketAdapterV1, IUniswapV3SwapRouter02} from "../src/adapters/
 
 contract MockTokenAdapter is ERC20 {
     constructor(string memory n, string memory s) ERC20(n, s) {}
-    function mintFor(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mintFor(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 /// @notice Mock router that mimics SwapRouter02.exactInputSingle behavior under test.
@@ -18,8 +21,13 @@ contract MockSwapRouter02 {
     uint256 public outputRatioBps = 9500; // 95% by default (5% "slippage")
     bool public revertOnNext;
 
-    function setOutputRatioBps(uint256 bps) external { outputRatioBps = bps; }
-    function setRevert(bool v) external { revertOnNext = v; }
+    function setOutputRatioBps(uint256 bps) external {
+        outputRatioBps = bps;
+    }
+
+    function setRevert(bool v) external {
+        revertOnNext = v;
+    }
 
     function exactInputSingle(IUniswapV3SwapRouter02.ExactInputSingleParams calldata params)
         external
