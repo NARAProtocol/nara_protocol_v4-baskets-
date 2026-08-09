@@ -1,0 +1,15 @@
+# Local dev secrets for `npm run dev:cf` (wrangler pages dev).
+# Copy to .dev.vars and fill in. .dev.vars is gitignored repo-wide.
+#
+# CoinGecko on-chain (GeckoTerminal) key for /api/pairs.
+#   Demo plan  -> https://api.coingecko.com/api/v3/onchain     (header x-cg-demo-api-key)
+#   Pro plan   -> https://pro-api.coingecko.com/api/v3/onchain (header x-cg-pro-api-key)
+# Without a key, functions fall back to the public GeckoTerminal API (rate-limited).
+CG_API_KEY=CG-your-key-here
+CG_API_PLAN=demo
+
+# Optional local adapter overrides. Production should set every adapter deployed
+# and registered in each basket manager.
+# VITE_BASKET_ADAPTER_AERO=0x...
+# VITE_BASKET_ADAPTER_SLIPSTREAM=0x...
+# VITE_BASKET_ADAPTER_PANCAKE=0x...

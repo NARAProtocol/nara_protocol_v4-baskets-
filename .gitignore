@@ -4,9 +4,21 @@ lib/
 broadcast/
 .env
 .env.*
+!.env.example
 node_modules/
 archive/
 .DS_Store
+
+# Embedded basket app
+app/dist/
+app/.wrangler/
+app/.tmp/
+app/.dev.vars
+app/.env
+app/.env.local
+app/.env.*.local
+!app/.env.example
+!app/.dev.vars.example
 
 # internal-only (kept local, not published)
 CLAUDE.md

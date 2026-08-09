@@ -1,110 +1,146 @@
-# NARA Baskets Deployment Manifest
+# Basket Deployment Manifests
 
-Last updated: 2026-06-03
+Last updated: 2026-07-30.
 
-This is the launch handoff checklist for a cold AI, deployer, or reviewer. A
-deployment is not production-ready until every basket has a saved manifest and
-passes the on-chain verifier.
+Status: no production basket manifest exists. No basket manager, V2 fee
+collector, or production adapter set is represented as deployed.
 
-## Canonical Scripts
+Production remains blocked until every launch basket has a saved manifest and
+the verifier and frontend parity checks pass.
 
-Use only:
+## Canonical locations
+
+Save one JSON file per basket:
+
+```text
+deployments/base-mainnet/base.json
+deployments/base-mainnet/ai.json
+deployments/base-mainnet/meme.json
+deployments/base-mainnet/defi.json
+```
+
+Legacy storage/env keys map to public names as follows:
+
+| Storage key | Public name |
+|---|---|
+| `base` | `CORE` |
+| `ai` | `AI` |
+| `meme` | `CULTURE` |
+| `defi` | `FINANCE` |
+
+The key is an implementation identifier, not a suitability or risk label.
+
+## Required manifest fields
+
+Each saved JSON object must contain:
+
+| Field | Type | Required value |
+|---|---|---|
+| `chainId` | integer | `8453` |
+| `basketKey` | string | One storage key from the table above |
+| `originCommit` | 40-character hex string | Immutable reviewed basket release commit |
+| `protocolOriginCommit` | 40-character hex string | Protected protocol release commit from `config/launch-baskets.json` |
+| `protocolActivationEvidenceCommit` | 40-character hex string | Immutable activation evidence commit from launch configuration |
+| `protocolContractSourceCommit` | 40-character hex string | Protected protocol contract/artifact source commit |
+| `deploymentTxHash` | 32-byte hex string | Basket deployment transaction |
+| `deploymentBlock` | integer | Receipt block |
+| `verificationBlock` | integer | Named readback block, not earlier than deployment |
+| `manager` | EVM address string | Deployed immutable manager |
+| `managerCodeHash` | 32-byte hex string | Exact reviewed manager runtime hash |
+| `nara` | EVM address string | `0xB6333F5D4cEd8dffA80F3F13697D6aA3BB3f19c1` |
+| `engine` | EVM address string | Exact active fixed-v4 Engine |
+| `engineCodeHash` | 32-byte hex string | Exact reviewed Engine runtime hash |
+| `usdc` | EVM address string | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| `weth` | EVM address string | `0x4200000000000000000000000000000000000006` |
+| `naraV4Hook` | EVM address string | Corrected replacement Hook; quarantined incident Hook forbidden |
+| `naraV4HookCodeHash` | 32-byte hex string | Exact corrected Hook runtime hash |
+| `naraV4PoolFee` | integer | Exact verified PoolKey fee |
+| `naraV4TickSpacing` | integer | Exact verified PoolKey tick spacing |
+| `naraV4PoolId` | 32-byte hex string | Exact registered canonical NARA/USDC PoolId |
+| `v4Router` | EVM address string | Canonical Base Universal Router |
+| `permit2` | EVM address string | Canonical Permit2 |
+| `feeCollector` | EVM address string | Deployed canonical V2 collector |
+| `feeCollectorCodeHash` | 32-byte hex string | Exact reviewed runtime code hash for that immutable deployment |
+| `adapters` | object | All five deployed adapter addresses |
+| `adapterCodeHashes` | object | Exact runtime hash for every named adapter |
+| `requiredAssetAdapter` | EVM address string | Must equal `adapters.uniswapV4` |
+| `requiredAssetAdapterCodeHash` | 32-byte hex string | Must equal `adapterCodeHashes.uniswapV4` |
+| `category` | string | Public name |
+| `basketName` | string | Public name |
+| `displayTier` | integer | Exact immutable constructor value; UI must not present it as suitability |
+| `assets` | EVM address array | Exact immutable asset order |
+| `weightsBps` | integer array | Exact immutable weights; total must equal `10_000` |
+| `paymentTokens` | EVM address array | Must equal `[Base USDC]` for Basket V1 |
+| `buyFeeBps` | integer | Exact immutable value |
+| `sellFeeBps` | integer | Exact immutable value |
+| `withdrawFeeBps` | integer | Exact immutable value |
+| `holdingFeeBps` | integer | `0` for the first public launch |
+| `referralShareBps` | integer | `0` for the first public launch |
+| `maxWeightDeviationBps` | integer | Exact immutable value |
+| `minNaraWeightBps` | integer | Exact immutable value |
+| `minInputAmount` | decimal string | Positive raw payment-token-unit floor |
+| `configHash` | 32-byte hex string | On-chain manager `configHash()` |
+| `collectorAdmin` | EVM address string | Contract Safe/guardian; distinct from swapper and route manager |
+| `collectorSwapper` | EVM address string | Separate operational signer |
+| `collectorRouteManager` | EVM address string | Contract timelock; distinct from admin and swapper |
+| `collectorRouter` | EVM address string | Typed SwapRouter02 route |
+| `collectorUsdcUsdFeed` | EVM address string | Reviewed USDC/USD feed |
+| `collectorEthUsdFeed` | EVM address string | Reviewed ETH/USD feed |
+| `collectorPoolFee` | integer | Direct USDC/WETH pool fee |
+| `collectorMaxUsdcOracleAge` | integer | Immutable USDC/USD freshness limit in seconds |
+| `collectorMaxEthOracleAge` | integer | Immutable ETH/USD freshness limit in seconds |
+| `collectorMaxSlippageBps` | integer | Immutable basis points, at most 500 |
+
+Do not create a manifest before deployment. Do not insert guessed addresses,
+zero addresses, example hashes, or copied values from another basket.
+
+## Deployment evidence
+
+For every manifest, record separately:
+
+- deployment transaction hash;
+- deployment block;
+- Basescan manager URL;
+- Basescan collector URL;
+- Basescan adapter URLs;
+- role-handoff transaction evidence;
+- exact-fork rehearsal evidence;
+- verifier output;
+- buy, sell, and `withdrawUnderlying` smoke evidence.
+
+## Verification
+
+Load verifier environment values directly from the saved manifest. Do not type
+or copy shortened addresses.
+
+Run from this repository root:
 
 ```powershell
 & "$env:USERPROFILE\.foundry\bin\forge.exe" script `
-  script/DeployMainnetReady.s.sol:DeployMainnetReady `
-  --root nara-category-baskets-v1 `
-  --rpc-url $env:BASE_MAINNET_RPC_URL `
-  --broadcast
-
-& "$env:USERPROFILE\.foundry\bin\forge.exe" script `
   script/VerifyDeployedBasket.s.sol:VerifyDeployedBasket `
-  --root nara-category-baskets-v1 `
-  --rpc-url $env:BASE_MAINNET_RPC_URL
+  --rpc-url "$env:BASE_MAINNET_RPC_URL"
 ```
 
-Do not use `DeployBaseMainnet.s.sol` or `DeployBaseSepolia.s.sol`. They are
-legacy paths and intentionally revert.
+The verifier environment must describe the same basket as the selected
+manifest. It must include `EXPECTED_CONFIG_HASH`, `EXPECTED_MANAGER_CODEHASH`,
+`EXPECTED_ENGINE_CODEHASH`, `EXPECTED_REQUIRED_ASSET_ADAPTER_CODEHASH`, and one
+`EXPECTED_ADAPTER_CODEHASH_<index>` for every adapter in `EXPECTED_ADAPTERS`.
+It must also provide `EXPECTED_NARA_V4_HOOK`,
+`EXPECTED_NARA_V4_HOOK_CODEHASH`, `EXPECTED_NARA_V4_POOL_FEE`,
+`EXPECTED_NARA_V4_TICK_SPACING`, `EXPECTED_V4_ROUTER`, `EXPECTED_PERMIT2`,
+`EXPECTED_MAX_USDC_ORACLE_AGE`, and `EXPECTED_MAX_ETH_ORACLE_AGE` from the same
+reviewed protocol and collector manifests.
+`VerifyDeployedBasket.s.sol` checks chain ID, manager configuration, assets,
+weights, payment tokens, adapters, zero launch fees, required NARA weight,
+minimum input, exact configuration and controlled-contract runtime hashes,
+collector immutable bindings, typed route, oracle parameters, separated role
+holders, and the required adapter's exact Hook/fee/tick-spacing/router/Permit2
+bindings. Retired V3 token/Engine addresses and the quarantined incident v4
+Hook are rejected. The active fixed-v4 NARA and Engine remain valid inputs.
 
-## Manifest Fields
+## Frontend parity
 
-Save one manifest per basket under:
-
-```text
-nara-category-baskets-v1/deployments/base-mainnet/base.json
-nara-category-baskets-v1/deployments/base-mainnet/ai.json
-nara-category-baskets-v1/deployments/base-mainnet/meme.json
-nara-category-baskets-v1/deployments/base-mainnet/defi.json
-```
-
-Set `NARA_BASKET_MANIFEST_DIR` when using a different manifest directory.
-
-Each manifest must contain:
-
-```json
-{
-  "chainId": 8453,
-  "basketKey": "core",
-  "manager": "0x...",
-  "nara": "0x...",
-  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  "weth": "0x4200000000000000000000000000000000000006",
-  "feeCollector": "0x...",
-  "adapters": {
-    "uniswapV3": "0x...",
-    "aerodrome": "0x...",
-    "slipstream": "0x...",
-    "pancakeV3": "0x...",
-    "uniswapV4": "0x..."
-  },
-  "category": "CORE",
-  "basketName": "CORE",
-  "displayTier": 1,
-  "assets": ["0x...", "0x...", "0x..."],
-  "weightsBps": [1000, 3000, 3000, 2000, 1000],
-  "paymentTokens": ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "0x4200000000000000000000000000000000000006"],
-  "buyFeeBps": 10,
-  "sellFeeBps": 10,
-  "withdrawFeeBps": 10,
-  "holdingFeeBps": 0,
-  "referralShareBps": 0,
-  "maxWeightDeviationBps": 100,
-  "minNaraWeightBps": 500,
-  "minInputAmount": "25000000",
-  "configHash": "0x..."
-}
-```
-
-## Verifier Env
-
-Set these values from the saved manifest before running
-`VerifyDeployedBasket.s.sol`:
-
-```text
-EXPECTED_CHAIN_ID=8453
-MANAGER=0x...
-EXPECTED_NARA=0x...
-EXPECTED_FEE_RECIPIENT=0x...
-EXPECTED_CATEGORY=CORE
-EXPECTED_BASKET_NAME=CORE
-EXPECTED_DISPLAY_TIER=1
-EXPECTED_ASSETS=0x...,0x...,0x...
-EXPECTED_WEIGHTS=1000,3000,3000,2000,1000
-EXPECTED_PAYMENT_TOKENS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,0x4200000000000000000000000000000000000006
-EXPECTED_ADAPTERS=0x...,0x...,0x...,0x...,0x...
-EXPECTED_BUY_FEE_BPS=10
-EXPECTED_SELL_FEE_BPS=10
-EXPECTED_WITHDRAW_FEE_BPS=10
-EXPECTED_HOLDING_FEE_BPS=0
-EXPECTED_REFERRAL_SHARE_BPS=0
-EXPECTED_MAX_WEIGHT_DEV_BPS=100
-EXPECTED_MIN_NARA_WEIGHT_BPS=500
-EXPECTED_MIN_INPUT_AMOUNT=25000000
-```
-
-## Frontend Parity
-
-The verified addresses must match `apps/nara-baskets` production env:
+The production frontend reads these storage-key variables:
 
 ```text
 VITE_BASKET_MANAGER_BASE
@@ -124,71 +160,25 @@ VITE_NARA_V4_TICK_SPACING
 VITE_UNISWAP_V4_QUOTER
 ```
 
-If the frontend env and verified on-chain manager disagree, buying must stay in
-preview or disabled mode.
-
-The frontend production deploy gate enforces this with:
+Run:
 
 ```powershell
-cd apps/nara-baskets
-npm run check:manifest-env
+npm run check:manifest-env --prefix app
 ```
 
-`deploy:cf:prod` runs this after `check:prod-env`; production cannot ship unless
-all four saved manifests match the frontend env and launch curation.
+If a manifest, on-chain manager, launch curation, or frontend variable
+disagrees, the basket must remain in preview.
 
-`minInputAmount` is a raw token-unit floor checked against the payment token.
-`25000000` is a 25 USDC floor for the USDC path. It is not USD-normalized for
-WETH; if WETH buys need a strict USD minimum, enforce that at the UI/operations
-layer or deploy a payment-token-specific minimum design in a future manager.
+## Current launch constraints
 
-For the first public Base launch, `check:manifest-env` enforces conservative
-defaults:
-
-- `withdrawFeeBps` must match the basket `sellFeeBps`.
+- `withdrawFeeBps` must be `0`.
 - `holdingFeeBps` must be `0`.
 - `referralShareBps` must be `0`.
 - `minInputAmount` must be a positive integer.
-
-Changing those values is a product/legal launch decision and must update the
-launch curation, frontend copy, and this gate together.
-
-## Required Launch Proof
-
-Before mainnet UI is marked live:
-
-1. `forge build --root nara-category-baskets-v1` passes.
-2. Non-fork tests pass.
-3. Aerodrome fork adapter tests pass against Base RPC.
-4. `VerifyDeployedBasket.s.sol` passes for every basket.
-5. The v4 NARA hook pool quote works through `VITE_UNISWAP_V4_QUOTER` or the
-   default Base v4 quoter.
-6. `apps/nara-baskets` typecheck, builder tests, and production build pass.
-7. No UI copy recommends a basket, implies suitability, or says the product is
-   safe, protected, guaranteed, optimized, or best.
-
-Current setup baseline from 2026-06-03:
-
-```text
-forge test --root nara-category-baskets-v1
-129 passed, 0 failed, 2 skipped
-
-forge test --root nara-category-baskets-v1 --match-path test/AerodromeBasketAdapterV1.t.sol --fork-url <BASE_RPC_URL>
-15 passed, 0 failed, 0 skipped
-```
-
-The skipped non-fork tests are fork-gated proofs. The v4 fork proof remains
-post-NARA-pool work because it requires:
-
-```text
-V4_FORK_RPC
-V4_UNIVERSAL_ROUTER
-V4_PERMIT2
-V4_TOKEN_IN
-V4_TOKEN_OUT
-V4_AMOUNT_IN
-V4_FEE
-V4_TICK_SPACING
-V4_HOOK
-V4_WHALE
-```
+- `ADMIN`, `SWAPPER`, and `ROUTE_MANAGER` must be distinct.
+- `ADMIN` and `ROUTE_MANAGER` must be contracts; the deploy script rejects
+  EOAs for those roles.
+- Collector route, feeds, pool fee, age bound, and slippage bound must match
+  the reviewed deployment evidence.
+- Static vaults are not part of the launch and cannot use the V2 collector's
+  nonexistent V1 vault-redemption methods.

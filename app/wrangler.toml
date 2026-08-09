@@ -1,0 +1,12 @@
+name = "nara-baskets"
+compatibility_date = "2026-05-28"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "./dist"
+
+[vars]
+BASE_RPC_URL = "https://mainnet.base.org"
+# CoinGecko on-chain (GeckoTerminal). Plan tier is non-secret and selects the
+# base URL + auth header in functions/_lib/gecko.ts. The secret CG_API_KEY is
+# NOT committed — set it for prod via: wrangler pages secret put CG_API_KEY
+# (local dev reads it from the gitignored .dev.vars file).
+CG_API_PLAN = "demo"  # or "pro"

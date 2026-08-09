@@ -26,11 +26,11 @@ weights from the market for each user.
 
 ```text
 User picks a basket.
-User pays an approved payment token (USDC or WETH).
+User pays USDC. Basket V1 does not allow ETH or WETH payment.
 Protocol buys the configured basket assets at current market execution.
 Protocol stores the exact bought amounts under one position id.
 User receives one ERC721 receipt.
-User can later sell the whole receipt back to USDC/payment token or fully into NARA.
+User can later sell the whole receipt back to USDC or withdraw the raw underlying assets.
 User can partially sell or partially withdraw selected assets if one component breaks.
 Protocol earns a buy fee on purchase, a sell fee on sell, and a withdraw fee on raw underlying withdrawal.
 Every official receipt basket includes NARA as a required core asset.
@@ -94,8 +94,9 @@ name
 riskTier
 assets
 weightsBps
-approved payment tokens (USDC + WETH at launch)
-approved adapters (UniswapV3, AerodromeAMM, AerodromeSlipstream, PancakeSwapV3 — immutable)
+approved payment tokens (USDC only at Basket V1 launch)
+approved adapters (UniswapV3, AerodromeAMM, AerodromeSlipstream,
+PancakeSwapV3, and canonical hooked UniswapV4 — immutable)
 buyFeeBps
 sellFeeBps
 withdrawFeeBps
@@ -116,22 +117,24 @@ all basket configuration
 For production, `requiredAsset` must be the canonical NARA token. The constructor
 reverts unless the basket includes NARA with at least the configured minimum
 weight. This makes every one-click basket create direct NARA demand on buy and
-sell NARA as part of the whole-basket exit.
+routes the held NARA back through the canonical NARA/USDC adapter during a USDC
+sell. Raw withdrawal transfers the held NARA directly to the receipt owner.
 
-Sell outputs are intentionally narrow:
+The contract-level sell-output allowlist is intentionally narrow:
 
 ```text
-immutable allowed payment token, usually USDC
-requiredAsset, which is NARA in production
+immutable allowed payment token: USDC
+requiredAsset, which is NARA in production (not an exposed production route)
 ```
 
-This gives the user the two V1 exits that matter:
+The production adapter set does not turn arbitrary basket components directly
+into NARA, so the app must not expose a whole-position NARA conversion. The
+supported user exits are:
 
 ```text
 sell whole basket -> USDC
-sell whole basket -> NARA
 withdraw whole basket -> raw underlying assets
-sell selected assets -> USDC/NARA
+sell selected assets -> USDC
 withdraw selected assets -> raw underlying assets
 ```
 
@@ -199,7 +202,8 @@ Execution:
 ```text
 1. Manager verifies deadline.
 2. Manager verifies caller owns tokenId.
-3. Manager verifies outputToken is allowed: immutable payment token or NARA.
+3. Manager verifies outputToken is contract-level allowlisted. The publishable
+   app supplies USDC because no complete production route to NARA exists.
 4. Any basket asset equal to outputToken is counted as direct output.
 5. Every other basket asset must be sold through approved adapters.
 6. Every swap must be basket asset -> outputToken.
@@ -234,11 +238,10 @@ Users sell the whole basket through sellBasket.
 Fallback path:
 
 ```text
-Owner or approved operator can call withdrawUnderlying when all underlying token contracts transfer normally.
+Only the literal receipt owner can call withdrawUnderlying (the manager disables approvals and requires msg.sender == ownerOf — no approved-operator path) when all underlying token contracts transfer normally.
 Manager clears accounting, decrements totalAccountedAsset, and burns the receipt.
-Manager charges withdrawFeeBps in-kind on each asset before transfer.
-Manager sends the fee portion per asset to feeRecipient.
-Manager sends the net portion per asset to receiver.
+Launch config requires withdrawFeeBps = 0.
+Manager sends the full recorded asset amount to receiver.
 receiver must not be the manager contract address.
 ```
 
@@ -248,8 +251,8 @@ DEX liquidity, or routing break.
 Partial fallback path:
 
 ```text
-Owner or approved operator can call withdrawUnderlyingPartial for selected assets.
-Owner or approved operator can call sellBasketPartial for selected assets.
+Only the literal receipt owner can call withdrawUnderlyingPartial for selected assets (no approved-operator path).
+Only the literal receipt owner can call sellBasketPartial for selected assets (no approved-operator path).
 The receipt stays live while any asset amount remains.
 The receipt burns only when all stored asset amounts reach zero.
 ```
@@ -276,8 +279,10 @@ Then:
 ```text
 buy fee token -> fee collector
 sell fee token -> fee collector
-withdraw fee token (per asset, in-kind) -> fee collector
-SWAPPER_ROLE swaps fee tokens to NARA or WETH
+withdraw and holding fees -> disabled at launch
+SWAPPER_ROLE converts USDC through typed oracle-bounded USDC/WETH routing with
+independent immutable freshness limits for the USDC/USD and ETH/USD feeds
+held NARA -> direct engine deposit
 NARA -> engine.depositRewards
 WETH -> unwrap -> engine.notifyEthRewards
 ```
@@ -307,14 +312,13 @@ Sell-side controls:
 deadline
 caller must own receipt
 output token allowlist
-NARA exit allowed through requiredAsset
+NARA is contract-level allowlisted through requiredAsset, but the production app exposes USDC sells only
 tokenIn must be a basket asset
 tokenOut must be outputToken
-whole-position sale required
+sellBasket closes the whole position; sellBasketPartial leaves the receipt live
 minOutputAmount
 exact transfer checks
 exact adapter accounting checks
-partial sell can exit selected assets and leave the receipt live
 ```
 
 Accounting controls:

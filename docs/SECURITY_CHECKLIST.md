@@ -15,21 +15,23 @@ Every live ERC721 receipt maps to one basket category.
 Every live receipt has stored amounts for every configured basket asset.
 Every receipt basket must include requiredAsset, intended to be NARA.
 requiredAsset weight must be at least minRequiredAssetWeightBps.
-Receipt owner or approved ERC721 operator can sell.
+Only the literal receipt owner can sell. The receipt is non-delegable: approve/setApprovalForAll revert (ApprovalsDisabled), isApprovedForAll is always false, and every action requires msg.sender == ownerOf. There are NO approved operators, and the receipt is NOT listable on approval-based marketplaces. The owner can still transfer it directly (transferFrom where msg.sender == owner).
 Normal exit sells the whole position only.
 Incident exit can sell selected assets and leave the receipt live.
-Raw underlying withdrawal is callable by the receipt owner or approved operator.
+Raw underlying withdrawal is callable only by the literal receipt owner (no approved operators — see above).
 Raw underlying withdrawal still requires every underlying token transfer to succeed.
 Partial raw withdrawal can withdraw selected assets and leave the receipt live.
 Buy fees are charged in the input token.
 Sell fees are charged in the output token.
 Withdraw fees are charged in-kind per underlying asset before transfer to receiver.
 withdrawFeeBps is immutable and set at deploy time; cap is MAX_FEE_BPS (100 = 1%).
-Holding fees are an annual in-kind streaming fee accrued per asset over time; immutable; cap is MAX_HOLDING_FEE_BPS (200 = 2%/yr).
+Holding fees are an annual in-kind streaming fee accrued from a fixed per-asset checkpoint; immutable; cap is MAX_HOLDING_FEE_BPS (200 = 2%/yr).
+Repeated permissionless accrual calls must equal one accrual over the same elapsed period.
 Holding-fee accrual is pure accounting (no token transfer); it can never be blocked by a frozen asset and never bricks an exit or partial rescue.
 Accrued holding fees move into protocolFeeAccrued and leave only via permissionless sweepAccruedFee to the immutable feeRecipient.
 Holding fee is settled on every sell, partial sell, withdraw, and partial withdraw; also via permissionless accrueHoldingFee.
 Referrer is bound to a position at buy (referrerOf) and earns an immutable share (referralShareBps, cap MAX_REFERRAL_SHARE_BPS = 5000) of every buy and sell fee.
+Launch referralShareBps is zero; enabling it later must be treated as a permissionless rebate unless a separately reviewed authenticated policy exists.
 Referral rewards use PULL accounting: credited into referralRewards[referrer][token] — never transferred during buy/sell. A referrer that cannot receive a token cannot block user exits.
 Referrer claims via claimReferralReward(token, to). Only the referrer can initiate; they may direct to any non-zero, non-manager address.
 Self-referral (referrer == buyer) and referrer == manager are ignored. Referral split applies to buy/sell cash fees only; withdraw and holding fees are 100% protocol.
@@ -56,6 +58,9 @@ No mutable basket config.
 ```text
 configured basket must include NARA at or above the manager minimum.
 payment token must be immutable-allowed for that basket.
+
+Basket V1 paymentTokens must contain Base USDC only. Do not include WETH until a
+separately reviewed composite WETH -> USDC -> NARA route exists.
 deadline enforced.
 inputAmount must be nonzero.
 manager pulls exactly inputAmount.
@@ -74,7 +79,7 @@ each stored asset amount must be nonzero.
 ## Receipt sell checks
 
 ```text
-caller must own tokenId or be approved for tokenId.
+caller must be the literal owner of tokenId (approvals are disabled; no approved/operator path).
 position must be live.
 output token must be an immutable-allowed payment token or requiredAsset/NARA.
 deadline enforced.
@@ -87,8 +92,9 @@ net output must satisfy minOutputAmount.
 sell fee is charged from gross output.
 receipt is burned.
 totalAccountedAsset is decremented by the stored receipt amounts.
-normal user exits can be all-to-USDC/payment token or all-to-NARA.
-partial user exits can sell selected assets to USDC/payment token or NARA.
+the publishable Basket V1 route supports whole-position and selected-asset sells to USDC.
+raw whole-position and selected-asset underlying withdrawals remain DEX-independent exits.
+NARA is contract-level allowlisted as an output, but the production adapter set does not provide arbitrary asset -> NARA routes; the app must not expose that conversion.
 ```
 
 ## Receipt pooled-accounting checks
@@ -161,22 +167,24 @@ unexpected stuck tokens can be swept only by admin.
 
 ```text
 No user deposits.
-Only protocol-earned fee shares or receipt-manager fee tokens.
-Only REDEEMER_ROLE can redeem fee shares.
-Fee vault must be allowed before fee share redemption.
-Only SWAPPER_ROLE can execute fee swaps.
+Only USDC and NARA receipt-manager fee tokens in the current V2 launch.
+V2 has no REDEEMER_ROLE, vault allowlist, or fee-share redemption path.
+Only SWAPPER_ROLE can execute the typed USDC/WETH conversion.
 Only SWAPPER_ROLE can push NARA/WETH/native ETH rewards into the engine.
-Executor manager can revoke unsafe fee executors.
-Fee executor selector must be allowed.
-Fee swaps must output NARA or WETH.
-Fee swaps must set nonzero minAmountOut.
-Swap minAmountOut enforced.
-SwapExecuted actual input/output deltas must be monitored.
+No arbitrary executor, selector, calldata, or caller-supplied minAmountOut exists.
+Base sequencer status must be up for at least the configured one-hour recovery grace period.
+USDC/USD and ETH/USD oracle rounds must be positive, complete, and independently fresh under their feed-specific immutable age limits; USDC/USD must remain within the depeg bound.
+Oracle-derived minimum WETH output and immutable max slippage are enforced.
+Exact USDC spend and actual WETH balance delta are enforced.
+Admin, SWAPPER_ROLE, and ROUTE_MANAGER_ROLE are distinct.
+Admin and route manager are contracts.
+Route changes wait two days.
+Only the independent admin can execute a pending route; it can also cancel it, and revoking its proposer invalidates it.
 NARA rewards route uses engine.depositRewards.
 ETH rewards route uses engine.notifyEthRewards.
-Random basket tokens not routed to notifyTokenRewards by default.
-Unexpected non-reward tokens or ETH can be swept only by admin.
-NARA and WETH reward assets cannot be swept through sweepToken.
+withdrawFeeBps, holdingFeeBps, and referralShareBps are zero at launch.
+The deployment verifier must match the exact collector runtime code hash, immutable bindings, route, both oracle-age parameters, slippage bound, and role holders.
+No token or ETH sweep exists.
 ```
 
 ## Assets allowed in baskets
@@ -196,19 +204,32 @@ wrapped assets with unknown bridge risk
 
 ## Test requirements before mainnet
 
-```text
-~/.foundry/bin/forge test --root nara-category-baskets-v1
-~/.foundry/bin/forge test --root nara-category-baskets-v1 --fuzz-runs 1000
-slither .
-manual audit
-external audit
-Base Sepolia deployment
-small capped mainnet pilot
+The complete acceptance matrix in
+[`ROUND_FLOW_RELEASE_GATE.md`](ROUND_FLOW_RELEASE_GATE.md) is mandatory. In
+particular, a green unit suite does not waive a missing corrected-v4 Hook
+manifest, oracle proof, route-depth evidence, immutable origin, exact-fork
+rehearsal, or user-flow gate.
+
+```powershell
+node scripts/check-repository.mjs
+& "$env:USERPROFILE\.foundry\bin\forge.exe" fmt --check
+& "$env:USERPROFILE\.foundry\bin\forge.exe" build --sizes
+& "$env:USERPROFILE\.foundry\bin\forge.exe" test `
+  --no-match-path "test/*Fork*.t.sol" `
+  --no-match-contract NARAImmutableBasketPositionManagerV1InvariantTest
+$env:FOUNDRY_PROFILE = "ci"
+& "$env:USERPROFILE\.foundry\bin\forge.exe" test `
+  --match-contract NARAImmutableBasketPositionManagerV1InvariantTest
+Remove-Item Env:FOUNDRY_PROFILE
+npm ci --prefix app
+npm run check --prefix app
+npm audit --prefix app --audit-level=high
 ```
 
-Note: forge binary is at ~/.foundry/bin/forge and is NOT on PATH by default.
-Always pass --root nara-category-baskets-v1 when running from workspace root.
-Expected clean run: 96 pass, 1 fork-env skip (AerodromeBasketAdapterV1 fork test).
+Also require reviewed Slither and Aderyn output, the 31-test Base adapter fork
+suite, and an exact candidate `ForkBuyProof` rehearsal. The Forge binary is not
+on `PATH` by default in the documented Windows environment. No independent
+audit is claimed.
 
 ## Known V1 limitations
 
@@ -218,7 +239,8 @@ Receipt baskets are not fungible ERC20 index shares.
 Each receipt owns the exact assets bought for that position.
 Every receipt basket has direct NARA exposure.
 Receipt basket budget weights are enforced in payment-token allocation terms, not oracle NAV terms.
-Receipt users can exit the whole basket to NARA or to an immutable allowed payment token.
+The publishable Basket V1 route exits whole or selected positions to USDC, or transfers raw underlying assets directly.
+Although NARA remains in the contract-level output allowlist, a whole-position NARA conversion is unavailable without separately reviewed routes for every non-NARA component.
 The quote builder must still choose real market routes and minOut values.
 Normal sell is whole-position. Incident exits can sell selected assets, but V1 has no percentage-based partial sell UX.
 weightsBps are target/display metadata, not enforced NAV weights.
@@ -228,6 +250,6 @@ Bad asset can make exits involving that asset revert if token transfer reverts.
 Partial sell and partial withdrawal can rescue the other selected assets.
 Router execution depends on external DEX liquidity.
 Cross-chain assets require wrapped tokens or V2 cross-chain routing.
-Fee swaps depend on SWAPPER_ROLE operational security and executor allowlisting.
-V1 has no oracle fair-value check for fee swaps.
+Fee conversion depends on SWAPPER_ROLE operational security, reviewed oracle
+feeds, the configured Uniswap pool, and route-change monitoring.
 ```

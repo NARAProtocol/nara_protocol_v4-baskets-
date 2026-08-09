@@ -1,0 +1,14 @@
+* @NARAProtocol
+
+/src/NARAImmutableBasketPositionManagerV1.sol @NARAProtocol
+/src/NARAIndexFeeCollectorV2.sol @NARAProtocol
+/src/adapters/ @NARAProtocol
+/script/DeployMainnetReady.s.sol @NARAProtocol
+/script/VerifyDeployedBasket.s.sol @NARAProtocol
+/config/launch-baskets.json @NARAProtocol
+/docs/DEPLOYMENT_MANIFEST.md @NARAProtocol
+/docs/REPOSITORY_MAINTENANCE.md @NARAProtocol
+/app/src/shared/baskets.ts @NARAProtocol
+/app/scripts/ @NARAProtocol
+/SECURITY.md @NARAProtocol
+/.github/ @NARAProtocol

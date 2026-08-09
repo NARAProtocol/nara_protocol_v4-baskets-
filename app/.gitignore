@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.wrangler/
+.tmp/
+
+# Local secrets for `wrangler pages dev` — never commit. The CoinGecko key lives
+# here for local dev; production uses `wrangler pages secret put CG_API_KEY`.
+.dev.vars
+
+# Local Vite env. VITE_* vars (RainbowKit project ID, contract addresses) live
+# here for local dev; production sets them in the Cloudflare Pages dashboard.
+.env
+.env.local
+.env.*.local

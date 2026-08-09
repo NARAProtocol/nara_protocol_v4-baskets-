@@ -1,0 +1,54 @@
+{
+  "name": "nara-baskets",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:cf": "wrangler pages dev --port 4175",
+    "build": "tsc --noEmit && vite build",
+    "check": "npm run test:builders && npm run check:copy && npm run check:launch-config && npm run build",
+    "check:copy": "node scripts/check-copy.mjs",
+    "check:launch-config": "node scripts/check-launch-parity.mjs",
+    "check:manifest-env": "node scripts/check-manifest-env.mjs",
+    "check:prod-env": "node scripts/check-prod-env.mjs",
+    "test:builders": "esbuild src/shared/baskets.test.ts --bundle --platform=node --format=esm --define:import.meta.env={} --outfile=.tmp/baskets.test.mjs && node .tmp/baskets.test.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "deploy:cf:prod": "npm run check:copy && npm run check:launch-config && npm run check:prod-env && npm run check:manifest-env && npm audit --audit-level=high && npm run build && wrangler pages deploy dist --project-name nara-baskets --branch main"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NARAProtocol/nara_protocol_v4_baskets.git",
+    "directory": "app"
+  },
+  "bugs": {
+    "url": "https://github.com/NARAProtocol/nara_protocol_v4_baskets/issues"
+  },
+  "homepage": "https://github.com/NARAProtocol/nara_protocol_v4_baskets/tree/main/app",
+  "optionalDependencies": {
+    "@rolldown/binding-win32-x64-msvc": "^1.0.2"
+  },
+  "dependencies": {
+    "@rainbow-me/rainbowkit": "2.2.11",
+    "@tanstack/react-query": "5.101.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "viem": "2.55.10",
+    "wagmi": "2.19.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260808.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "esbuild": "0.28.1",
+    "typescript": "5.9.3",
+    "vite": "8.1.5",
+    "wrangler": "4.120.0"
+  },
+  "overrides": {
+    "axios": "1.18.1",
+    "ws": "8.21.1"
+  }
+}
