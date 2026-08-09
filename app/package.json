@@ -27,7 +27,7 @@
   },
   "homepage": "https://github.com/NARAProtocol/nara_protocol_v4_baskets/tree/main/app",
   "optionalDependencies": {
-    "@rolldown/binding-win32-x64-msvc": "^1.0.2"
+    "@rolldown/binding-win32-x64-msvc": "^1.2.3"
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "2.2.11",
