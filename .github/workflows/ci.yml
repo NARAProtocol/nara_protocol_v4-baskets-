@@ -135,7 +135,9 @@ jobs:
       - name: Analyze Solidity sources
         run: |
           aderyn --version
-          aderyn --src src --skip-update-check --no-snippets --stdout .
+          report="$RUNNER_TEMP/aderyn-report.json"
+          aderyn --src src --skip-update-check --no-snippets --output "$report" .
+          jq . "$report"
 
   fork-adapters:
     name: fork adapters (manual)
