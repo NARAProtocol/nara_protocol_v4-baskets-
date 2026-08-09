@@ -131,10 +131,30 @@ mythril:
 
 aderyn:
   The Windows PATH entry is a stale npm shim whose target package is absent, so
-  no local Aderyn result is claimed. CI installs Aderyn on Linux from the
-  installer at the immutable commit recorded in ci.yml and runs it as an
-  advisory check.
+  no local Aderyn result is claimed. CI installs checksummed Aderyn 0.6.8 on
+  Linux and writes JSON because that release crashes while rendering this
+  repository's Markdown report. The 2026-08-09 CI run completed 88 detectors
+  over all nine source files and reported two High categories and 16 Low
+  categories for review.
 ```
+
+### Aderyn CI disposition
+
+The High-category dispositions are:
+
+- `eth-send-unchecked-address` at
+  `NARAImmutableBasketPositionManagerV1.sol:994` misclassifies an ERC-20 fee
+  sweep as an ETH transfer. `_sendExact` uses `SafeERC20.safeTransfer`, and the
+  caller cannot select the constructor-fixed, nonzero fee recipient.
+- `reentrancy-state-change` includes external binding/metadata reads followed
+  by immutable assignments in the active fee-collector and Uniswap v4 adapter
+  constructors. Those contracts have no deployed runtime code to reenter
+  during construction. Its runtime instance is in the explicitly
+  reference-only `CategoryIndexSuiteV1`; that factory path is also protected by
+  `nonReentrant` and is excluded from the receipt-basket launch.
+
+These dispositions explain the reported locations; they are not an independent
+audit or a claim that all analyzer output is false positive.
 
 ## Notes
 
