@@ -50,7 +50,7 @@ try {
     npm audit --prefix app --audit-level=high
     if ($LASTEXITCODE -ne 0) { throw "App dependency audit found a High or Critical advisory." }
 
-    Write-Output "NARA Baskets repository verification passed."
+    Write-Output "NARA basket repository verification passed."
 }
 finally {
     Pop-Location

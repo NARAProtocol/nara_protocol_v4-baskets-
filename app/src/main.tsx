@@ -44,7 +44,7 @@ const connectors = connectorsForWallets(
     { groupName: "Easiest", wallets: [baseWallet] },
     { groupName: "Other wallets", wallets: [metaMaskWallet, walletConnectWallet, injectedWallet] },
   ],
-  { appName: "NARA Baskets", projectId },
+  { appName: "NARA", projectId },
 );
 
 const config = createConfig({
@@ -57,7 +57,7 @@ const config = createConfig({
 
 if (useFork) {
   // eslint-disable-next-line no-console
-  console.info("[NARA Baskets] FORK MODE — RPC: localhost:8545, NARA = LINK stand-in");
+  console.info("[NARA] FORK MODE — RPC: localhost:8545, NARA = LINK stand-in");
 }
 
 const queryClient = new QueryClient();

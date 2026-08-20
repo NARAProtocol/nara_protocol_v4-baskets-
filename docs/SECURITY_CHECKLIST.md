@@ -92,8 +92,9 @@ net output must satisfy minOutputAmount.
 sell fee is charged from gross output.
 receipt is burned.
 totalAccountedAsset is decremented by the stored receipt amounts.
-normal user exits can be all-to-USDC/payment token or all-to-NARA.
-partial user exits can sell selected assets to USDC/payment token or NARA.
+the publishable Basket V1 route supports whole-position and selected-asset sells to USDC.
+raw whole-position and selected-asset underlying withdrawals remain DEX-independent exits.
+NARA is contract-level allowlisted as an output, but the production adapter set does not provide arbitrary asset -> NARA routes; the app must not expose that conversion.
 ```
 
 ## Receipt pooled-accounting checks
@@ -172,7 +173,7 @@ Only SWAPPER_ROLE can execute the typed USDC/WETH conversion.
 Only SWAPPER_ROLE can push NARA/WETH/native ETH rewards into the engine.
 No arbitrary executor, selector, calldata, or caller-supplied minAmountOut exists.
 Base sequencer status must be up for at least the configured one-hour recovery grace period.
-USDC/USD and ETH/USD oracle rounds must be positive, complete, and fresh; USDC/USD must remain within the depeg bound.
+USDC/USD and ETH/USD oracle rounds must be positive, complete, and independently fresh under their feed-specific immutable age limits; USDC/USD must remain within the depeg bound.
 Oracle-derived minimum WETH output and immutable max slippage are enforced.
 Exact USDC spend and actual WETH balance delta are enforced.
 Admin, SWAPPER_ROLE, and ROUTE_MANAGER_ROLE are distinct.
@@ -182,7 +183,7 @@ Only the independent admin can execute a pending route; it can also cancel it, a
 NARA rewards route uses engine.depositRewards.
 ETH rewards route uses engine.notifyEthRewards.
 withdrawFeeBps, holdingFeeBps, and referralShareBps are zero at launch.
-The deployment verifier must match the exact collector runtime code hash, immutable bindings, route, oracle parameters, and role holders.
+The deployment verifier must match the exact collector runtime code hash, immutable bindings, route, both oracle-age parameters, slippage bound, and role holders.
 No token or ETH sweep exists.
 ```
 
@@ -202,6 +203,12 @@ wrapped assets with unknown bridge risk
 ```
 
 ## Test requirements before mainnet
+
+The complete acceptance matrix in
+[`ROUND_FLOW_RELEASE_GATE.md`](ROUND_FLOW_RELEASE_GATE.md) is mandatory. In
+particular, a green unit suite does not waive a missing corrected-v4 Hook
+manifest, oracle proof, route-depth evidence, immutable origin, exact-fork
+rehearsal, or user-flow gate.
 
 ```powershell
 node scripts/check-repository.mjs
@@ -232,7 +239,8 @@ Receipt baskets are not fungible ERC20 index shares.
 Each receipt owns the exact assets bought for that position.
 Every receipt basket has direct NARA exposure.
 Receipt basket budget weights are enforced in payment-token allocation terms, not oracle NAV terms.
-Receipt users can exit the whole basket to NARA or to an immutable allowed payment token.
+The publishable Basket V1 route exits whole or selected positions to USDC, or transfers raw underlying assets directly.
+Although NARA remains in the contract-level output allowlist, a whole-position NARA conversion is unavailable without separately reviewed routes for every non-NARA component.
 The quote builder must still choose real market routes and minOut values.
 Normal sell is whole-position. Incident exits can sell selected assets, but V1 has no percentage-based partial sell UX.
 weightsBps are target/display metadata, not enforced NAV weights.

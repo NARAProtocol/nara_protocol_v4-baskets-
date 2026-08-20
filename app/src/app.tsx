@@ -28,14 +28,21 @@ import {
   NARA_TOKEN,
   NARA_FEE_COLLECTOR,
   NARA_V4_HOOK,
+  NARA_V4_POOL_FEE,
   NARA_V4_POOL_READY,
+  NARA_V4_TICK_SPACING,
   naraLiquidityGrowthHookAbi,
+  uniswapV4BasketAdapterBindingAbi,
   effectiveNaraUsdcDepth,
   maxBasketInputForNaraDepth,
+  validateNaraDepthCapacity,
   NARA_ENGINE_V4,
   NARA_POSITION_NFT_V4,
   NARA_ROUTER_V4,
   NARA_GRADUATION_READY,
+  LAUNCH_REFERRER,
+  MAX_ROUTE_PRICE_IMPACT_BPS,
+  MAX_USER_SLIPPAGE_BPS,
   naraPermitAbi,
   nara4EngineAbi,
   nara4PositionNftAbi,
@@ -62,17 +69,24 @@ import {
   formatUsdc,
   formatTokenAmount,
   computeAllocations,
+  allocateBasketInput,
+  protectedExecutionQuotes,
+  refreshedHookFeesRequireReview,
+  refreshedQuotesRequireReview,
   buildAeroBuyRoutes,
   buildAeroSellRoutes,
   buildCanonicalNaraV4QuoteCall,
   buildBuyParams,
   buildPartialSellParams,
   buildSellParams,
-  basketBuysEnabled,
+  routePriceImpactBps,
+  basketAccessForStatus,
+  basketManagerCanExit,
   basketStatus,
   type BasketConfig,
   type AssetAllocation,
   type QuoteCall,
+  type NaraHookFeeQuote,
 } from "./shared/baskets";
 import {
   fetchAllBasketPairs,
@@ -84,6 +98,7 @@ import {
   type TokenPairInfo,
   type ResolvedPool,
 } from "./shared/pairs";
+import { AccessibleModal } from "./components/AccessibleModal";
 
 // ─── Error mapping ────────────────────────────────────────────────────────────
 // Map raw wallet/contract reverts to one plain sentence so a new user never sees a
@@ -102,6 +117,12 @@ function friendlyTxError(e: unknown): string {
   }
   if (m.includes("nonexactswap") || m.includes("netinputnotfullyallocated") || m.includes("nonexacttransfer")) {
     return "Routing changed — refresh the quote and retry.";
+  }
+  if (m.includes("missing executable quote") || m.includes("stale or mismatched route")) {
+    return "A route quote is unavailable or stale. Refresh before retrying; no transaction was sent.";
+  }
+  if (m.includes("slippage must be between")) {
+    return `Choose slippage between 0% and ${(MAX_USER_SLIPPAGE_BPS / 100).toFixed(1)}%.`;
   }
   if (m.includes("paymenttokennotallowed")) {
     return "That payment token isn't enabled for this basket.";
@@ -123,6 +144,71 @@ function friendlyTxError(e: unknown): string {
   return short.length > 0 ? short : "Transaction failed. Please retry.";
 }
 
+async function readFreshNaraDepthCapacity(
+  publicClient: PublicClient,
+  hook: `0x${string}`,
+  adapter: `0x${string}`,
+  basketInput: bigint,
+  naraWeightBps: number,
+  expectedPoolFee: number,
+  expectedTickSpacing: number,
+) {
+  // Pin every value to one recent block so configured depth, live depth, and
+  // immutable adapter bindings cannot be combined from different chain heads.
+  const block = await publicClient.getBlock({ blockTag: "latest" });
+  const readAt = { blockNumber: block.number } as const;
+  const [configuredDepth, liveDepth, adapterHook, adapterPoolFee, adapterTickSpacing] =
+    await Promise.all([
+      publicClient.readContract({
+        address: hook,
+        abi: naraLiquidityGrowthHookAbi,
+        functionName: "protocolDepth",
+        args: [USDC_ADDRESS],
+        ...readAt,
+      }),
+      publicClient.readContract({
+        address: hook,
+        abi: naraLiquidityGrowthHookAbi,
+        functionName: "probeLiveDepth",
+        args: [USDC_ADDRESS],
+        ...readAt,
+      }),
+      publicClient.readContract({
+        address: adapter,
+        abi: uniswapV4BasketAdapterBindingAbi,
+        functionName: "canonicalHooks",
+        ...readAt,
+      }),
+      publicClient.readContract({
+        address: adapter,
+        abi: uniswapV4BasketAdapterBindingAbi,
+        functionName: "canonicalFee",
+        ...readAt,
+      }),
+      publicClient.readContract({
+        address: adapter,
+        abi: uniswapV4BasketAdapterBindingAbi,
+        functionName: "canonicalTickSpacing",
+        ...readAt,
+      }),
+    ]);
+
+  return validateNaraDepthCapacity({
+    expectedHook: hook,
+    adapterHook,
+    expectedPoolFee,
+    adapterPoolFee,
+    expectedTickSpacing,
+    adapterTickSpacing,
+    configuredDepth,
+    liveDepth,
+    basketInput,
+    naraWeightBps,
+    blockTimestampSeconds: block.timestamp,
+    nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
+  });
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface EnrichedPosition {
@@ -141,22 +227,26 @@ interface EnrichedPosition {
   // USDC-direction sell quotes
   assetUsdcValues: bigint[];
   assetUsdcRoutes: QuoteCall[];
+  assetUsdcHookFees: (NaraHookFeeQuote | null)[];
   currentValueUsdc: bigint;
   netCostUsdc: bigint;
   pnlUsdc: bigint;
   pnlPercent: number;
-  // NARA-direction sell quotes (0n when NARA_TOKEN not set)
-  assetNaraValues: bigint[];
-  assetNaraRoutes: QuoteCall[];
-  currentValueNara: bigint;
   quotesLoaded: boolean;
 }
 
-type SellOutputToken = "usdc" | "nara";
+function positionCanExit(position: Pick<EnrichedPosition, "basketKey" | "managerAddress">): boolean {
+  const config = BASKET_CONFIGS.find((basket) => basket.key === position.basketKey);
+  if (!config) return false;
+  return basketManagerCanExit(
+    basketStatus(config),
+    BASKET_MANAGERS[config.key],
+    position.managerAddress,
+  );
+}
 
 interface SellModalState {
   position: EnrichedPosition;
-  outputToken: SellOutputToken;
   assetIndexes?: number[];
 }
 
@@ -177,6 +267,7 @@ type EnabledVenues = {
 type RouteQuote = {
   call: QuoteCall;
   quote: bigint;
+  hookFee: NaraHookFeeQuote | null;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -197,6 +288,11 @@ function resolveAssetMeta(
 
 function sameAddress(a?: string | null, b?: string | null) {
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
+}
+
+/** Presentation only: the ERC-20 symbol remains `NARA`; public ticker copy uses `$NARA`. */
+function displayTokenSymbol(symbol: string): string {
+  return symbol === "NARA" ? "$NARA" : symbol;
 }
 
 function venueFromDexId(dexId: string): QuoteCall["dex"] | null {
@@ -303,6 +399,7 @@ async function readPoolTickSpacing(
 async function executeQuoteCall(
   publicClient: PublicClient,
   call: QuoteCall,
+  blockNumber?: bigint,
 ): Promise<bigint> {
   if (call.amountIn === 0n) return 0n;
   if (call.dex === "direct") return call.amountIn;
@@ -316,6 +413,7 @@ async function executeQuoteCall(
         abi: aerodromeRouterAbi,
         functionName: "getAmountsOut",
         args: [call.amountIn, call.routes],
+        blockNumber,
       });
       const arr = amounts as bigint[];
       return arr[arr.length - 1] ?? 0n;
@@ -333,6 +431,7 @@ async function executeQuoteCall(
           tickSpacing: call.tickSpacing,
           sqrtPriceLimitX96: 0n,
         }],
+        blockNumber,
       });
       return (result as [bigint, bigint, number, bigint])[0];
     }
@@ -358,6 +457,7 @@ async function executeQuoteCall(
           exactAmount: call.amountIn,
           hookData: "0x",
         }],
+        blockNumber,
       });
       return (result as [bigint, bigint])[0];
     }
@@ -373,10 +473,38 @@ async function executeQuoteCall(
         fee: call.fee,
         sqrtPriceLimitX96: 0n,
       }],
+      blockNumber,
     });
     return (result as [bigint, bigint, number, bigint])[0];
   } catch {
     return 0n;
+  }
+}
+
+async function readNaraHookFeeQuote(
+  publicClient: PublicClient,
+  call: QuoteCall,
+  blockNumber: bigint,
+): Promise<NaraHookFeeQuote | null> {
+  if (
+    call.dex !== "uniswap_v4" ||
+    !NARA_V4_HOOK ||
+    !sameAddress(call.hooks, NARA_V4_HOOK) ||
+    !(sameAddress(call.tokenIn, USDC_ADDRESS) || sameAddress(call.tokenOut, USDC_ADDRESS))
+  ) return null;
+
+  try {
+    const result = await publicClient.readContract({
+      address: NARA_V4_HOOK,
+      abi: naraLiquidityGrowthHookAbi,
+      functionName: "quotePoolFeeDetailed",
+      args: [sameAddress(call.tokenIn, USDC_ADDRESS), call.amountIn],
+      blockNumber,
+    });
+    const [marginalFeeBps, effectiveFeeBps, feeAmount] = result as readonly [number, number, bigint];
+    return { marginalFeeBps, effectiveFeeBps, feeAmount, blockNumber };
+  } catch {
+    return null;
   }
 }
 
@@ -543,9 +671,33 @@ async function selectDeepestQuotedRoute(
   publicClient: PublicClient,
   candidates: QuoteCall[],
 ): Promise<RouteQuote> {
+  if (candidates.length === 0) {
+    return {
+      call: { dex: "direct", tokenIn: USDC_ADDRESS, tokenOut: USDC_ADDRESS, amountIn: 0n },
+      quote: 0n,
+      hookFee: null,
+    };
+  }
+  const blockNumber = await publicClient.getBlockNumber();
   for (const call of candidates) {
-    const quote = await executeQuoteCall(publicClient, call);
-    if (quote > 0n || call.dex === "direct") return { call, quote };
+    const quote = await executeQuoteCall(publicClient, call, blockNumber);
+    if (call.dex === "direct") return { call, quote, hookFee: null };
+    if (quote <= 0n || call.amountIn <= 0n) continue;
+
+    // A non-zero quote can still be economically unusable when the selected
+    // pool is shallow. Compare it with a 1%-size probe on the exact same route;
+    // proportional venue/Hook fees cancel, leaving nonlinear size impact.
+    const probeAmountIn = call.amountIn > 100n ? call.amountIn / 100n : call.amountIn;
+    const probeCall = { ...call, amountIn: probeAmountIn } as QuoteCall;
+    const probeQuote = await executeQuoteCall(publicClient, probeCall, blockNumber);
+    const impactBps = routePriceImpactBps(call.amountIn, quote, probeAmountIn, probeQuote);
+    if (impactBps !== null && impactBps <= MAX_ROUTE_PRICE_IMPACT_BPS) {
+      const hookFee = await readNaraHookFeeQuote(publicClient, call, blockNumber);
+      // The canonical v4 route is not executable through this interface unless
+      // its dynamic Hook fee can be disclosed from the exact quote block.
+      if (call.dex === "uniswap_v4" && !hookFee) continue;
+      return { call, quote, hookFee };
+    }
   }
   const fallback = candidates[0] ?? {
     dex: "direct" as const,
@@ -553,7 +705,7 @@ async function selectDeepestQuotedRoute(
     tokenOut: USDC_ADDRESS,
     amountIn: 0n,
   };
-  return { call: fallback, quote: 0n };
+  return { call: fallback, quote: 0n, hookFee: null };
 }
 
 async function buildBuyRouteQuotes(
@@ -566,12 +718,14 @@ async function buildBuyRouteQuotes(
   enabled: EnabledVenues,
   effectiveWeights?: readonly number[] | null,
 ): Promise<RouteQuote[]> {
-  const bps = 10000n;
+  const weights = config.assets.map((asset, index) =>
+    Number(effectiveWeights?.[index] ?? asset.weightBps),
+  );
+  const allocations = allocateBasketInput(netInput, weights);
   return Promise.all(
     config.assets.map(async (asset, i) => {
       const tokenOut = asset.symbol === "NARA" ? naraAddress : (asset.address as `0x${string}`);
-      const weight = Number(effectiveWeights?.[i] ?? asset.weightBps);
-      const amountIn = (netInput * BigInt(weight)) / bps;
+      const amountIn = allocations[i];
       const candidates = await buildRouteCandidates(
         publicClient,
         asset,
@@ -604,6 +758,7 @@ async function buildSellRouteQuotes(
         return {
           call: { dex: "direct", tokenIn: addr, tokenOut: outputToken, amountIn },
           quote: 0n,
+          hookFee: null,
         };
       }
       const meta = resolveAssetMeta(addr, config);
@@ -645,7 +800,7 @@ function AllocationBar({ assets }: { assets: BasketConfig["assets"] }) {
           key={a.symbol}
           className={`nb-alloc-segment${a.symbol === "NARA" ? " nara" : ""}`}
           style={{ flex: a.weightBps, background: a.color }}
-          title={`${a.symbol} ${(a.weightBps / 100).toFixed(0)}%`}
+          title={`${displayTokenSymbol(a.symbol)} ${(a.weightBps / 100).toFixed(0)}%`}
         />
       ))}
     </div>
@@ -659,7 +814,7 @@ function TokenRail({ assets }: { assets: BasketConfig["assets"] }) {
         <span key={a.symbol}>
           {i > 0 && <span className="nb-token-rail-sep">·</span>}
           <span className={a.symbol === "NARA" ? "nb-token-rail-nara" : "nb-token-rail-sym"}>
-            {a.symbol}
+            {displayTokenSymbol(a.symbol)}
           </span>
         </span>
       ))}
@@ -692,7 +847,7 @@ function AllocationBreakdown({
       {allocations.map((a) => (
         <div key={a.symbol} className="nb-breakdown-row">
           <span className="nb-breakdown-dot" style={{ background: a.color }} />
-          <span className="nb-breakdown-sym">{a.symbol}</span>
+          <span className="nb-breakdown-sym">{displayTokenSymbol(a.symbol)}</span>
           <span className="nb-breakdown-pct">{(a.weightBps / 100).toFixed(0)}%</span>
           <span className="nb-breakdown-usdc">{fmt(a.usdcAmount)}</span>
         </div>
@@ -726,7 +881,6 @@ function BuyFlow({
   pairsBySymbol,
   slippageBps,
   deadlineMin,
-  urlReferrer,
   isOnBase,
   onOpenBasketModal,
 }: {
@@ -735,7 +889,6 @@ function BuyFlow({
   pairsBySymbol?: PairsBySymbol;
   slippageBps: number;
   deadlineMin: number;
-  urlReferrer: `0x${string}` | null;
   isOnBase: boolean;
   onOpenBasketModal: () => void;
 }) {
@@ -745,7 +898,9 @@ function BuyFlow({
   // (not null) so it drops straight into wagmi's `address` slot; all reads stay disabled.
   const managerAddr = config ? (BASKET_MANAGERS[config.key] ?? undefined) : undefined;
   const publicClient = usePublicClient();
-  const buysEnabled = config ? basketBuysEnabled(config) : false;
+  const currentBasketStatus = config ? basketStatus(config) : "preview";
+  const basketAccess = basketAccessForStatus(currentBasketStatus);
+  const buysEnabled = config ? basketAccess.canBuy : false;
   const { data: managerBytecode, isLoading: managerBytecodeLoading } = useBytecode({
     address: managerAddr,
     query: { enabled: !!managerAddr, staleTime: Infinity },
@@ -760,7 +915,10 @@ function BuyFlow({
   const [rawAmount, setRawAmount] = useState("");
   const [quotes, setQuotes] = useState<bigint[]>([]);
   const [quoteRoutes, setQuoteRoutes] = useState<QuoteCall[]>([]);
+  const [hookFeeQuotes, setHookFeeQuotes] = useState<(NaraHookFeeQuote | null)[]>([]);
   const [quotesLoading, setQuotesLoading] = useState(false);
+  const [refreshingBuyQuote, setRefreshingBuyQuote] = useState(false);
+  const [freshDepthIssue, setFreshDepthIssue] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [flash, setFlash] = useState<{
     type: "error" | "success" | "warning" | "neutral";
@@ -801,6 +959,8 @@ function BuyFlow({
     setReviewOpen(false);
     setQuotes([]);
     setQuoteRoutes([]);
+    setHookFeeQuotes([]);
+    setFreshDepthIssue(null);
   }, [config?.key]);
 
   // ─── USDC balance ─────────────────────────────────────────────────────────
@@ -1083,15 +1243,15 @@ function BuyFlow({
 
   const managerConfigIssue = useMemo(() => {
     if (!config) return null;
-    if (!NARA_TOKEN) return "NARA token address missing";
+    if (!NARA_TOKEN) return "$NARA token address missing";
     if (!NARA_FEE_COLLECTOR) return "Fee collector address missing";
     if (!BASKET_ADAPTER_V3) return "Uniswap adapter missing";
     if (basketNeedsAero && !BASKET_ADAPTER_AERO) return "Aerodrome adapter missing";
     if (basketNeedsV4 && !BASKET_ADAPTER_V4) return "Uniswap V4 adapter missing";
-    if (basketNeedsV4 && !NARA_V4_POOL_READY) return "NARA v4 pool config missing";
+    if (basketNeedsV4 && !NARA_V4_POOL_READY) return "$NARA v4 pool config missing";
     if (managerCodeMissing) return "Manager contract is not deployed on this network";
     if (configLoading) return null;
-    if (!requiredAssetValid) return "Manager required asset is not NARA";
+    if (!requiredAssetValid) return "Manager required asset is not $NARA";
     if (!assetsValid) return "Manager asset list differs from app config";
     if (!weightsValid) return "Manager weights differ from app config";
     if (!feesValid) return "Manager fees differ from app config";
@@ -1108,7 +1268,7 @@ function BuyFlow({
     if (BASKET_ADAPTER_PANCAKE && pancakeAdapterAllowed !== true) {
       return "Pancake V3 adapter is not allowed";
     }
-    if (naraSellAllowed !== true) return "NARA exit is not enabled";
+    if (naraSellAllowed !== true) return "$NARA exit is not enabled";
     return null;
   }, [
     config,
@@ -1169,14 +1329,15 @@ function BuyFlow({
     !naraDepthLoading &&
     !naraDepthUnavailable &&
     usdcAmount > maxBasketInput;
-  const naraDepthIssue =
+  const cachedNaraDepthIssue =
     naraDepthUnavailable
-      ? "NARA liquidity depth is unavailable"
+      ? "$NARA liquidity depth is unavailable"
       : naraDepthEmpty
-        ? "NARA liquidity is not active"
+        ? "$NARA liquidity is not active"
         : basketInputExceedsDepth
           ? `Input exceeds the current basket limit of $${formatUsdc(maxBasketInput)} USDC`
           : null;
+  const naraDepthIssue = cachedNaraDepthIssue ?? freshDepthIssue;
 
   // ─── Auto-quote on input change (debounced 600 ms) ───────────────────────
   // Selects the deepest compatible live venue per asset, then quotes that exact route.
@@ -1191,11 +1352,13 @@ function BuyFlow({
       configLoading ||
       managerConfigIssue ||
       naraDepthLoading ||
-      naraDepthIssue
+      cachedNaraDepthIssue
     ) {
       setQuotes([]);
       setQuoteRoutes([]);
+      setHookFeeQuotes([]);
       setQuotesLoading(false);
+      setFreshDepthIssue(null);
       return;
     }
     let cancelled = false;
@@ -1204,6 +1367,24 @@ function BuyFlow({
       const fee = (usdcAmount * BigInt(config.buyFeeBps)) / 10000n;
       const net = usdcAmount - fee;
       try {
+        if (
+          !NARA_V4_HOOK ||
+          !BASKET_ADAPTER_V4 ||
+          NARA_V4_POOL_FEE === null ||
+          NARA_V4_TICK_SPACING === null
+        ) {
+          throw new Error("$NARA v4 depth configuration is incomplete");
+        }
+        await readFreshNaraDepthCapacity(
+          publicClient,
+          NARA_V4_HOOK,
+          BASKET_ADAPTER_V4,
+          usdcAmount,
+          naraWeightBps,
+          NARA_V4_POOL_FEE,
+          NARA_V4_TICK_SPACING,
+        );
+        if (cancelled) return;
         const routeQuotes = await buildBuyRouteQuotes(
           publicClient,
           config,
@@ -1215,8 +1396,19 @@ function BuyFlow({
           onChainWeights as readonly number[] | null,
         );
         if (!cancelled) {
+          setFreshDepthIssue(null);
           setQuotes(routeQuotes.map((route) => route.quote));
           setQuoteRoutes(routeQuotes.map((route) => route.call));
+          setHookFeeQuotes(routeQuotes.map((route) => route.hookFee));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setQuotes([]);
+          setQuoteRoutes([]);
+          setHookFeeQuotes([]);
+          setFreshDepthIssue(
+            error instanceof Error ? error.message : "$NARA liquidity depth is unavailable",
+          );
         }
       } finally {
         if (!cancelled) setQuotesLoading(false);
@@ -1236,7 +1428,8 @@ function BuyFlow({
     configLoading,
     managerConfigIssue,
     naraDepthLoading,
-    naraDepthIssue,
+    cachedNaraDepthIssue,
+    naraWeightBps,
     pairsBySymbol,
     enabledVenues,
     onChainWeights,
@@ -1266,6 +1459,9 @@ function BuyFlow({
   );
 
   const poolIssue = quoterPoolIssue ?? geckoPoolIssue;
+  const naraAssetIndex = config?.assets.findIndex((asset) => asset.symbol === "NARA") ?? -1;
+  const naraHookFeeQuote = naraAssetIndex >= 0 ? hookFeeQuotes[naraAssetIndex] ?? null : null;
+  const hookFeeDisclosureReady = !basketNeedsV4 || !!naraHookFeeQuote;
 
   // ─── Wrap (native ETH → WETH) ─────────────────────────────────────────────
   const { writeContract: writeWrap, data: wrapTxHash } = useWriteContract();
@@ -1340,6 +1536,7 @@ function BuyFlow({
       setRawAmount("");
       setQuotes([]);
       setQuoteRoutes([]);
+      setHookFeeQuotes([]);
       setReviewOpen(false);
       onSuccess(
         config
@@ -1359,6 +1556,7 @@ function BuyFlow({
       setRawAmount("");
       setQuotes([]);
       setQuoteRoutes([]);
+      setHookFeeQuotes([]);
       setReviewOpen(false);
       onSuccess(
         config
@@ -1417,13 +1615,27 @@ function BuyFlow({
   };
 
   const handleBuy = async () => {
-    if (!config || !address || !managerAddr || !BASKET_ADAPTER_V3 || !NARA_TOKEN || !publicClient || usdcAmount === 0n) return;
+    if (
+      !config ||
+      !address ||
+      !managerAddr ||
+      !BASKET_ADAPTER_V3 ||
+      !NARA_TOKEN ||
+      !publicClient ||
+      usdcAmount === 0n ||
+      refreshingBuyQuote
+    ) return;
     if (!isOnBase) {
       setFlash({ type: "error", msg: "Switch to Base before confirming." });
       return;
     }
     if (!buysEnabled) {
-      setFlash({ type: "warning", msg: "This basket is exit-only. New buys are disabled." });
+      setFlash({
+        type: "warning",
+        msg: currentBasketStatus === "exit_only"
+          ? "This basket is exit-only. New buys are disabled."
+          : "This basket is in preview. Approvals and buys are disabled.",
+      });
       return;
     }
     if (configLoading) {
@@ -1435,7 +1647,7 @@ function BuyFlow({
       return;
     }
     if (naraDepthLoading) {
-      setFlash({ type: "neutral", msg: "Checking NARA liquidity depth." });
+      setFlash({ type: "neutral", msg: "Checking $NARA liquidity depth." });
       return;
     }
     if (naraDepthIssue) {
@@ -1446,11 +1658,63 @@ function BuyFlow({
       setFlash({ type: "warning", msg: "Waiting for quote." });
       return;
     }
+    setRefreshingBuyQuote(true);
     try {
+      const recheckDepthBeforeWrite = async () => {
+        if (
+          !NARA_V4_HOOK ||
+          !BASKET_ADAPTER_V4 ||
+          NARA_V4_POOL_FEE === null ||
+          NARA_V4_TICK_SPACING === null
+        ) {
+          throw new Error("$NARA v4 depth configuration is incomplete");
+        }
+        await readFreshNaraDepthCapacity(
+          publicClient,
+          NARA_V4_HOOK,
+          BASKET_ADAPTER_V4,
+          usdcAmount,
+          naraWeightBps,
+          NARA_V4_POOL_FEE,
+          NARA_V4_TICK_SPACING,
+        );
+        setFreshDepthIssue(null);
+      };
+      const fee = (usdcAmount * BigInt(config.buyFeeBps)) / 10000n;
+      const freshRouteQuotes = await buildBuyRouteQuotes(
+        publicClient,
+        config,
+        usdcAmount - fee,
+        NARA_TOKEN as `0x${string}`,
+        paymentTokenAddr,
+        pairsBySymbol,
+        enabledVenues,
+        onChainWeights as readonly number[] | null,
+      );
+      const freshQuotes = freshRouteQuotes.map((route) => route.quote);
+      const freshQuoteRoutes = freshRouteQuotes.map((route) => route.call);
+      const freshHookFeeQuotes = freshRouteQuotes.map((route) => route.hookFee);
+      setQuotes(freshQuotes);
+      setQuoteRoutes(freshQuoteRoutes);
+      setHookFeeQuotes(freshHookFeeQuotes);
+      const hookFeeIndexes = freshQuoteRoutes
+        .map((route, index) => route.dex === "uniswap_v4" ? index : -1)
+        .filter((index) => index >= 0);
+      if (
+        refreshedQuotesRequireReview(quotes, freshQuotes, slippageBps) ||
+        refreshedHookFeesRequireReview(hookFeeQuotes, freshHookFeeQuotes, hookFeeIndexes)
+      ) {
+        setFlash({
+          type: "warning",
+          msg: "The live quote or estimated $NARA Hook fee changed. Review the updated output, then confirm again.",
+        });
+        return;
+      }
+      const executionQuotes = protectedExecutionQuotes(quotes, freshQuotes);
       const params = buildBuyParams(
         config,
         usdcAmount,
-        quotes,
+        executionQuotes,
         address,
         BASKET_ADAPTER_V3 as `0x${string}`,
         NARA_TOKEN as `0x${string}`,
@@ -1460,8 +1724,8 @@ function BuyFlow({
         paymentTokenAddr,
         BASKET_ADAPTER_SLIPSTREAM as `0x${string}` | null,
         BASKET_ADAPTER_PANCAKE as `0x${string}` | null,
-        quoteRoutes,
-        urlReferrer ?? "0x0000000000000000000000000000000000000000",
+        freshQuoteRoutes,
+        LAUNCH_REFERRER,
         deadlineMin * 60,
         BASKET_ADAPTER_V4 as `0x${string}` | null,
       );
@@ -1487,6 +1751,7 @@ function BuyFlow({
           to: managerAddr,
           data: encodeFunctionData({ abi: basketManagerAbi, functionName: "buyBasket", args: [params] }),
         });
+        await recheckDepthBeforeWrite();
         sendCalls({
           calls,
           capabilities: canSponsor ? { paymasterService: { url: paymasterUrl! } } : undefined,
@@ -1501,9 +1766,15 @@ function BuyFlow({
         args: [params],
       } as const;
       await publicClient.simulateContract({ ...tx, account: address });
+      await recheckDepthBeforeWrite();
       writeBuy(tx);
     } catch (e) {
+      if (e instanceof Error && e.message.toLowerCase().includes("nara")) {
+        setFreshDepthIssue(e.message);
+      }
       setFlash({ type: "error", msg: friendlyTxError(e) });
+    } finally {
+      setRefreshingBuyQuote(false);
     }
   };
 
@@ -1512,6 +1783,7 @@ function BuyFlow({
     | "no-wallet"
     | "no-basket"
     | "wrong-network"
+    | "preview"
     | "exit-only"
     | "not-deployed"
     | "checking-config"
@@ -1533,7 +1805,8 @@ function BuyFlow({
     if (!isConnected) return "no-wallet";
     if (!config) return "no-basket";
     if (!isOnBase) return "wrong-network";
-    if (!buysEnabled) return "exit-only";
+    if (currentBasketStatus === "preview") return "preview";
+    if (currentBasketStatus === "exit_only") return "exit-only";
     if (!NARA_TOKEN || !NARA_FEE_COLLECTOR || !allAdaptersConfigured) return "not-deployed";
     if (configLoading) return "checking-config";
     if (managerConfigIssue) return "config-mismatch";
@@ -1541,9 +1814,10 @@ function BuyFlow({
     if (naraDepthIssue) return "depth-limit";
     if (usdcAmount === 0n) return "enter-amount";
     if (geckoPoolIssue) return "pool-issue";
-    if (quotesLoading) return "quoting";
+    if (quotesLoading || refreshingBuyQuote) return "quoting";
     if (quotes.length !== config.assets.length) return "quoting";
     if (quoteRoutes.length !== config.assets.length) return "quoting";
+    if (!hookFeeDisclosureReady) return "quoting";
     if (quoterPoolIssue) return "pool-issue";
     if (!reviewOpen) return "review";
     // Smart wallet: one confirmation does wrap+approve+buy, so skip the separate steps.
@@ -1557,9 +1831,10 @@ function BuyFlow({
     if (buying) return "buying";
     return "buy";
   }, [
-    isConnected, config, isOnBase, buysEnabled, allAdaptersConfigured, configLoading, managerConfigIssue,
+    isConnected, config, isOnBase, currentBasketStatus, allAdaptersConfigured, configLoading, managerConfigIssue,
     naraDepthLoading, naraDepthIssue, usdcAmount,
-    geckoPoolIssue, quotesLoading, quotes, quoteRoutes, quoterPoolIssue, approving,
+    geckoPoolIssue, quotesLoading, refreshingBuyQuote, quotes, quoteRoutes, hookFeeDisclosureReady,
+    quoterPoolIssue, approving,
     needsApproval, buying, reviewOpen, wrapping, needsWrap, canBatch, batching,
   ]);
 
@@ -1569,18 +1844,20 @@ function BuyFlow({
     reviewOpen &&
     !buying &&
     quotes.length === config.assets.length &&
-    quoteRoutes.length === config.assets.length;
+    quoteRoutes.length === config.assets.length &&
+    hookFeeDisclosureReady;
 
   const ctaLabel: Record<CtaState, string> = {
     "no-wallet": "Connect wallet",
     "no-basket": "Select a basket",
     "wrong-network": "Switch to Base",
+    "preview": "Preview only",
     "exit-only": "Exit only",
     "not-deployed": "Contracts deploying",
     "checking-config": "Checking manager...",
     "config-mismatch": managerConfigIssue ?? "Config mismatch - contact support",
-    "checking-depth": "Checking NARA liquidity...",
-    "depth-limit": naraDepthIssue ?? "NARA liquidity limit",
+    "checking-depth": "Checking $NARA liquidity...",
+    "depth-limit": naraDepthIssue ?? "$NARA liquidity limit",
     "enter-amount": "Enter amount",
     "quoting": "Getting quote…",
     "pool-issue": geckoPoolIssue
@@ -1644,7 +1921,13 @@ function BuyFlow({
         </div>
       )}
 
-      {config && !buysEnabled && (
+      {config && currentBasketStatus === "preview" && (
+        <div className="nb-flash neutral">
+          Preview only. You can inspect composition, routes, and fees; approvals and buys are disabled.
+        </div>
+      )}
+
+      {config && currentBasketStatus === "exit_only" && (
         <div className="nb-flash warning">
           This basket is exit-only. New buys are disabled. Manage existing receipts in the
           Portfolio tab.
@@ -1671,6 +1954,7 @@ function BuyFlow({
                       setRawAmount(displayBal);
                       setQuotes([]);
                       setQuoteRoutes([]);
+                      setHookFeeQuotes([]);
                       setReviewOpen(false);
                     }
                   }}
@@ -1693,6 +1977,7 @@ function BuyFlow({
               setRawAmount(e.target.value);
               setQuotes([]);
               setQuoteRoutes([]);
+              setHookFeeQuotes([]);
               setReviewOpen(false);
               setFlash(null);
             }}
@@ -1712,6 +1997,7 @@ function BuyFlow({
                   setRawAmount(v);
                   setQuotes([]);
                   setQuoteRoutes([]);
+                  setHookFeeQuotes([]);
                   setReviewOpen(false);
                 }}
               >
@@ -1869,11 +2155,11 @@ function BuyFlow({
                 : `$${formatUsdc(netInputAmount)} USDC`}
             </span>
           </div>
-          {urlReferrer && urlReferrer !== address && (
+          {naraHookFeeQuote && (
             <div className="nb-modal-row">
-              <span>Referred buy</span>
-              <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
-                Referrer earns a share of this fee
+              <span>Estimated $NARA Hook fee</span>
+              <span>
+                âˆ’${formatUsdc(naraHookFeeQuote.feeAmount)} USDC ({(naraHookFeeQuote.effectiveFeeBps / 100).toFixed(2)}%)
               </span>
             </div>
           )}
@@ -1893,7 +2179,7 @@ function BuyFlow({
               <div key={a.symbol} className="nb-review-asset">
                 <span>
                   <span className="nb-breakdown-dot" style={{ background: a.color }} />
-                  {a.symbol}
+                  {displayTokenSymbol(a.symbol)}
                 </span>
                 <span>
                   {(a.weightBps / 100).toFixed(0)}%
@@ -1908,6 +2194,11 @@ function BuyFlow({
             <div>You are choosing this basket yourself.</div>
             <div>This interface does not guide asset selection.</div>
             <div>Token values can go down to zero.</div>
+            {naraHookFeeQuote && (
+              <div>
+                The $NARA Hook fee is estimated at the quote block. Same-block trading pressure can change it before inclusion.
+              </div>
+            )}
             {needsWrap && (
               <div>{formatTokenAmount(wrapShortfall, 18)} ETH will be wrapped to WETH first.</div>
             )}
@@ -1929,7 +2220,7 @@ function BuyFlow({
               <div key={a.symbol} className="nb-review-asset">
                 <span>
                   <span className="nb-breakdown-dot" style={{ background: a.color }} />
-                  {a.symbol}
+                  {displayTokenSymbol(a.symbol)}
                 </span>
                 <span>{(a.weightBps / 100).toFixed(0)}%</span>
               </div>
@@ -1971,6 +2262,7 @@ function BuyFlow({
             }
             disabled={
               ctaState === "not-deployed" ||
+              ctaState === "preview" ||
               ctaState === "exit-only" ||
               ctaState === "checking-config" ||
               ctaState === "config-mismatch" ||
@@ -2027,7 +2319,7 @@ function PositionCard({
   isOnBase,
 }: {
   position: EnrichedPosition;
-  onSell: (p: EnrichedPosition, outputToken: SellOutputToken, assetIndexes?: number[]) => void;
+  onSell: (p: EnrichedPosition, assetIndexes?: number[]) => void;
   onWithdraw: (p: EnrichedPosition) => void;
   onWithdrawAsset: (p: EnrichedPosition, assetIndex: number) => void;
   onGraduate: (p: EnrichedPosition) => void;
@@ -2035,9 +2327,10 @@ function PositionCard({
   isOnBase: boolean;
 }) {
   const config = BASKET_CONFIGS.find((b) => b.key === position.basketKey);
+  const canExit = positionCanExit(position);
   const naraAssetIndex = position.assetSymbols.indexOf("NARA");
   const naraAmountInPosition = naraAssetIndex >= 0 ? (position.assetAmounts[naraAssetIndex] ?? 0n) : 0n;
-  const graduateAvailable = NARA_GRADUATION_READY && naraAmountInPosition > 0n;
+  const graduateAvailable = canExit && NARA_GRADUATION_READY && naraAmountInPosition > 0n;
   const openedDate = new Date(Number(position.openedAt) * 1000).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -2049,19 +2342,16 @@ function PositionCard({
   const pnlClass = pnlUp ? "up" : pnlDown ? "down" : "flat";
   const pnlSign = pnlUp ? "+" : pnlDown ? "−" : "";
   const pnlAbs = position.pnlUsdc < 0n ? -position.pnlUsdc : position.pnlUsdc;
-  const naraExitReady =
-    !!NARA_TOKEN && position.quotesLoaded && position.currentValueNara > 0n;
-
-  // Withdrawing raw tokens charges an in-kind fee (mirrors the exit fee). Read it on-chain
-  // so the disclosure is always accurate; fall back to the basket's configured exit fee.
+  // Launch managers require zero in-kind withdrawal fees. Read the immutable
+  // value so a non-conforming deployment is visible without inventing a fee
+  // while the read is pending.
   const { data: withdrawFeeBpsData } = useReadContract({
     address: position.managerAddress,
     abi: basketManagerAbi,
     functionName: "withdrawFeeBps",
-    query: { staleTime: Infinity },
+    query: { enabled: canExit, staleTime: Infinity },
   });
-  const withdrawFeePct =
-    Number(withdrawFeeBpsData ?? BigInt(config?.sellFeeBps ?? 0)) / 100;
+  const withdrawFeePct = Number(withdrawFeeBpsData ?? 0n) / 100;
   const withdrawFeeNote = withdrawFeePct > 0 ? ` (−${withdrawFeePct}% fee)` : "";
 
   // Annual in-kind holding fee, accrued per second against the position. Disclosed so the
@@ -2070,7 +2360,7 @@ function PositionCard({
     address: position.managerAddress,
     abi: basketManagerAbi,
     functionName: "holdingFeeBps",
-    query: { staleTime: Infinity },
+    query: { enabled: canExit, staleTime: Infinity },
   });
   const holdingFeePct = Number(holdingFeeBpsData ?? 0n) / 100;
 
@@ -2089,25 +2379,17 @@ function PositionCard({
         <div className="nb-position-actions">
           <button
             className="nb-position-btn"
-            onClick={() => onSell(position, "usdc")}
-            disabled={!isOnBase || !position.quotesLoaded || position.currentValueUsdc <= 0n}
-            title={isOnBase ? "Sell basket to USDC" : "Switch to Base before selling"}
+            onClick={() => onSell(position)}
+            disabled={!canExit || !isOnBase || !position.quotesLoaded || position.currentValueUsdc <= 0n}
+            title={!canExit ? "Exit actions are disabled for this basket status" : isOnBase ? "Sell basket to USDC" : "Switch to Base before selling"}
           >
             USDC
           </button>
           <button
             className="nb-position-btn"
-            onClick={() => onSell(position, "nara")}
-            disabled={!isOnBase || !naraExitReady}
-            title={!isOnBase ? "Switch to Base before converting" : NARA_TOKEN ? "Convert basket to NARA" : "NARA token not deployed"}
-          >
-            NARA
-          </button>
-          <button
-            className="nb-position-btn"
             onClick={() => onWithdraw(position)}
-            disabled={!isOnBase || withdrawing}
-            title={isOnBase ? `Withdraw the raw basket tokens${withdrawFeeNote}` : "Switch to Base before withdrawing"}
+            disabled={!canExit || !isOnBase || withdrawing}
+            title={!canExit ? "Exit actions are disabled for this basket status" : isOnBase ? `Withdraw the raw basket tokens${withdrawFeeNote}` : "Switch to Base before withdrawing"}
           >
             Tokens
           </button>
@@ -2116,9 +2398,9 @@ function PositionCard({
               className="nb-position-btn"
               onClick={() => onGraduate(position)}
               disabled={!isOnBase}
-              title={isOnBase ? "Withdraw this position's NARA and lock it in the NARA engine" : "Switch to Base first"}
+              title={isOnBase ? "Withdraw this position's $NARA and lock it in the NARA engine" : "Switch to Base first"}
             >
-              Lock NARA
+              Lock $NARA
             </button>
           )}
         </div>
@@ -2161,7 +2443,7 @@ function PositionCard({
                 key={position.assetAddresses[i]}
                 className="nb-alloc-segment"
                 style={{ flex: pct > 0 ? pct : 0.01, background: position.assetColors[i] }}
-                title={`${position.assetSymbols[i]} ${pct.toFixed(1)}%`}
+                title={`${displayTokenSymbol(position.assetSymbols[i])} ${pct.toFixed(1)}%`}
               />
             );
           })}
@@ -2175,8 +2457,7 @@ function PositionCard({
           const canSellAsset =
             position.quotesLoaded &&
             amount > 0n &&
-            ((position.assetUsdcValues[i] ?? 0n) > 0n ||
-              (!!NARA_TOKEN && (position.assetNaraValues[i] ?? 0n) > 0n));
+            (position.assetUsdcValues[i] ?? 0n) > 0n;
           const pct =
             position.quotesLoaded && position.currentValueUsdc > 0n
               ? Number((val * 10000n) / position.currentValueUsdc) / 100
@@ -2184,7 +2465,7 @@ function PositionCard({
           return (
             <div key={addr} className="nb-pos-brow">
               <span className="nb-breakdown-dot" style={{ background: position.assetColors[i] }} />
-              <span className="nb-pos-sym">{position.assetSymbols[i]}</span>
+              <span className="nb-pos-sym">{displayTokenSymbol(position.assetSymbols[i])}</span>
               <span className="nb-pos-amount">
                 {formatTokenAmount(amount, position.assetDecimals[i])}
               </span>
@@ -2199,17 +2480,17 @@ function PositionCard({
               </div>
               <button
                 className="nb-asset-sell-btn"
-                onClick={() => onSell(position, "usdc", [i])}
-                disabled={!isOnBase || !canSellAsset}
-                title={isOnBase ? `Sell ${position.assetSymbols[i]} using available exit routes` : "Switch to Base before selling"}
+                onClick={() => onSell(position, [i])}
+                disabled={!canExit || !isOnBase || !canSellAsset}
+                title={!canExit ? "Exit actions are disabled for this basket status" : isOnBase ? `Sell ${displayTokenSymbol(position.assetSymbols[i])} using available exit routes` : "Switch to Base before selling"}
               >
                 Sell
               </button>
               <button
                 className="nb-asset-withdraw-btn"
                 onClick={() => onWithdrawAsset(position, i)}
-                disabled={!isOnBase || withdrawing || amount === 0n}
-                title={isOnBase ? `Withdraw ${position.assetSymbols[i]} only${withdrawFeeNote}` : "Switch to Base before withdrawing"}
+                disabled={!canExit || !isOnBase || withdrawing || amount === 0n}
+                title={!canExit ? "Exit actions are disabled for this basket status" : isOnBase ? `Withdraw ${displayTokenSymbol(position.assetSymbols[i])} only${withdrawFeeNote}` : "Switch to Base before withdrawing"}
               >
                 Withdraw
               </button>
@@ -2231,7 +2512,6 @@ function PositionCard({
 
 function SellModal({
   state,
-  onToggleOutput,
   onConfirm,
   onClose,
   selling,
@@ -2240,7 +2520,6 @@ function SellModal({
   isOnBase,
 }: {
   state: SellModalState;
-  onToggleOutput: () => void;
   onConfirm: () => void;
   onClose: () => void;
   selling: boolean;
@@ -2249,10 +2528,9 @@ function SellModal({
   isOnBase: boolean;
 }) {
   const { switchChain } = useSwitchChain();
-  const { position, outputToken } = state;
+  const { position } = state;
   const config = BASKET_CONFIGS.find((b) => b.key === position.basketKey);
 
-  const isNara = outputToken === "nara";
   const selectedIndexes =
     state.assetIndexes && state.assetIndexes.length > 0
       ? state.assetIndexes
@@ -2261,15 +2539,24 @@ function SellModal({
     (sum, i) => sum + (position.assetUsdcValues[i] ?? 0n),
     0n,
   );
-  const selectedNaraQuote = selectedIndexes.reduce(
-    (sum, i) => sum + (position.assetNaraValues[i] ?? 0n),
-    0n,
-  );
-  const selectedSymbols = selectedIndexes.map((i) => position.assetSymbols[i]).join(" / ");
+  const selectedSymbols = selectedIndexes.map((i) => displayTokenSymbol(position.assetSymbols[i])).join(" / ");
   const partialExit = !!state.assetIndexes && state.assetIndexes.length > 0;
-  const naraAvailable = !!NARA_TOKEN && selectedNaraQuote > 0n;
+  const selectedRoutesReady = selectedIndexes.every((index) =>
+    (position.assetAmounts[index] ?? 0n) === 0n ||
+    sameAddress(position.assetAddresses[index], USDC_ADDRESS) ||
+    (position.assetUsdcValues[index] ?? 0n) > 0n,
+  );
+  const selectedHookFees = selectedIndexes.flatMap((index) => {
+    const fee = position.assetUsdcHookFees[index];
+    if (!fee) return [];
+    return [{
+      fee,
+      symbol: position.assetSymbols[index] ?? "NARA",
+      decimals: position.assetDecimals[index] ?? 18,
+    }];
+  });
 
-  const grossQuote = isNara ? selectedNaraQuote : selectedUsdcQuote;
+  const grossQuote = selectedUsdcQuote;
   const sellFeeBps = config?.sellFeeBps ?? 0;
   const sellFee = (grossQuote * BigInt(sellFeeBps)) / 10000n;
   const estNet = grossQuote - sellFee;
@@ -2278,43 +2565,14 @@ function SellModal({
   };
 
   return (
-    <div className="nb-modal-overlay" onClick={onClose}>
-      <div className="nb-modal" onClick={(e) => e.stopPropagation()}>
+    <AccessibleModal onClose={onClose} titleId="sell-position-title">
         <div className="nb-modal-header">
-          <div className="nb-modal-title">
-            {isNara ? "Convert to NARA" : "Sell to USDC"} #{position.tokenId.toString()}
+          <div className="nb-modal-title" id="sell-position-title">
+            Sell to USDC #{position.tokenId.toString()}
           </div>
-          <button className="nb-panel-close" style={{ position: "static" }} onClick={onClose}>
+          <button aria-label="Close sell review" className="nb-panel-close" style={{ position: "static" }} onClick={onClose}>
             ×
           </button>
-        </div>
-
-        {/* Output token selector */}
-        <div style={{ padding: "12px 20px 0", display: "flex", gap: 8 }}>
-          <button
-            className={`nb-position-btn${!isNara ? " selected" : ""}`}
-            style={{
-              padding: "5px 14px",
-              fontSize: 10,
-              ...((!isNara) ? { background: "var(--accent)", color: "#fff", border: "none" } : {}),
-            }}
-            onClick={isNara ? onToggleOutput : undefined}
-          >
-            USDC
-          </button>
-          {naraAvailable && (
-            <button
-              className={`nb-position-btn${isNara ? " selected" : ""}`}
-              style={{
-                padding: "5px 14px",
-                fontSize: 10,
-                ...(isNara ? { background: "var(--accent)", color: "#fff", border: "none" } : {}),
-              }}
-              onClick={!isNara ? onToggleOutput : undefined}
-            >
-              NARA
-            </button>
-          )}
         </div>
 
         <div className="nb-modal-body">
@@ -2324,30 +2582,20 @@ function SellModal({
           </div>
           <div className="nb-modal-row">
             <span>Est. gross output</span>
-            <span>
-              {isNara
-                ? `${formatTokenAmount(grossQuote, 18)} NARA`
-                : `$${formatUsdc(grossQuote)}`}
-            </span>
+            <span>${formatUsdc(grossQuote)}</span>
           </div>
           {config && (
             <div className="nb-modal-row">
               <span>Exit fee ({(config.sellFeeBps / 100).toFixed(2)}%)</span>
               <span>
                 −
-                {isNara
-                  ? `${formatTokenAmount(sellFee, 18)} NARA`
-                  : `$${formatUsdc(sellFee)}`}
+                ${formatUsdc(sellFee)}
               </span>
             </div>
           )}
           <div className="nb-modal-row strong">
             <span>Est. net to wallet</span>
-            <span>
-              {isNara
-                ? `${formatTokenAmount(estNet, 18)} NARA`
-                : `$${formatUsdc(estNet)}`}
-            </span>
+            <span>${formatUsdc(estNet)}</span>
           </div>
           <div className="nb-modal-row">
             <span>Slippage tolerance</span>
@@ -2355,12 +2603,22 @@ function SellModal({
           </div>
           <div className="nb-modal-row">
             <span>Output token</span>
-            <span>{isNara ? "NARA" : "USDC"}</span>
+            <span>USDC</span>
           </div>
+          {selectedHookFees.map(({ fee, symbol, decimals }) => (
+            <div className="nb-modal-row" key={symbol}>
+              <span>Estimated $NARA Hook fee</span>
+              <span>
+                âˆ’{formatTokenAmount(fee.feeAmount, decimals)} {symbol} ({(fee.effectiveFeeBps / 100).toFixed(2)}%)
+              </span>
+            </div>
+          ))}
         </div>
 
         <div className="nb-modal-warn">
-          {partialExit
+          {!selectedRoutesReady
+            ? "A live USDC route is unavailable. Close this review and use Withdraw tokens for the affected asset."
+            : partialExit
             ? "Only the selected asset exits this position. Other basket assets remain."
             : "All basket tokens exit this position. Cannot undo."}
         </div>
@@ -2369,6 +2627,9 @@ function SellModal({
           <div>This interface does not guide exit selection.</div>
           <div>Token values can go down.</div>
           <div>If a swap route is unavailable, Withdraw tokens transfers the underlying assets directly, without swaps.</div>
+          {selectedHookFees.length > 0 && (
+            <div>The $NARA Hook fee is estimated at the quote block. Same-block trading pressure can change it before inclusion.</div>
+          )}
         </div>
 
         <div className="nb-modal-actions">
@@ -2378,7 +2639,7 @@ function SellModal({
           <button
             className="nb-btn nb-btn-danger"
             onClick={isOnBase ? onConfirm : handleSwitchToBase}
-            disabled={selling || grossQuote <= 0n}
+            disabled={selling || grossQuote <= 0n || !selectedRoutesReady}
           >
             {selling ? (
               <>
@@ -2387,20 +2648,18 @@ function SellModal({
             ) : !isOnBase ? (
               "Switch to Base"
             ) : (
-              `${isNara ? "Convert to NARA" : "Sell to USDC"}${gasless ? " · gasless" : ""}`
+              `Sell to USDC${gasless ? " · gasless" : ""}`
             )}
           </button>
         </div>
-      </div>
-    </div>
+    </AccessibleModal>
   );
 }
 
 // ─── GraduateModal ──────────────────────────────────────────────────────────
-// Preview-only: shows what a "Lock NARA" action will do before the user confirms. The actual
+// Preview-only: shows what a "Lock $NARA" action will do before the user confirms. The actual
 // transaction re-reads everything fresh in handleGraduateConfirm (App()) rather than trusting
-// these preview numbers, matching how SellModal's preview and handleSellConfirm's execution are
-// already two independent reads in this codebase.
+// these preview numbers. Sell confirmation follows the same fresh-read rule.
 
 function GraduateModal({
   position,
@@ -2418,6 +2677,7 @@ function GraduateModal({
   slippageBps: number;
 }) {
   const { switchChain } = useSwitchChain();
+  const canExit = positionCanExit(position);
   const naraAssetIndex = position.assetSymbols.indexOf("NARA");
   const grossNara = naraAssetIndex >= 0 ? (position.assetAmounts[naraAssetIndex] ?? 0n) : 0n;
 
@@ -2425,7 +2685,7 @@ function GraduateModal({
     address: position.managerAddress,
     abi: basketManagerAbi,
     functionName: "withdrawFeeBps",
-    query: { staleTime: Infinity },
+    query: { enabled: canExit, staleTime: Infinity },
   });
   const withdrawFeeBps = BigInt(withdrawFeeBpsData ?? 0n);
   const netNara = grossNara - (grossNara * withdrawFeeBps) / 10000n;
@@ -2439,7 +2699,7 @@ function GraduateModal({
     address: (NARA_ENGINE_V4 ?? undefined) as `0x${string}` | undefined,
     abi: nara4EngineAbi,
     functionName: "lockFeeWei",
-    query: { enabled: !!NARA_ENGINE_V4, staleTime: 30_000 },
+    query: { enabled: canExit && !!NARA_ENGINE_V4, staleTime: 30_000 },
   });
   const lockFeeWei = BigInt(lockFeeWeiData ?? 0n);
 
@@ -2447,7 +2707,7 @@ function GraduateModal({
     address: (NARA_ENGINE_V4 ?? undefined) as `0x${string}` | undefined,
     abi: nara4EngineAbi,
     functionName: "lockFeeBps",
-    query: { enabled: !!NARA_ENGINE_V4, staleTime: 30_000 },
+    query: { enabled: canExit && !!NARA_ENGINE_V4, staleTime: 30_000 },
   });
   const lockFeeBps = BigInt(lockFeeBpsData ?? 0n);
 
@@ -2455,7 +2715,7 @@ function GraduateModal({
     address: (NARA_ENGINE_V4 ?? undefined) as `0x${string}` | undefined,
     abi: nara4EngineAbi,
     functionName: "config",
-    query: { enabled: !!NARA_ENGINE_V4, staleTime: 30_000 },
+    query: { enabled: canExit && !!NARA_ENGINE_V4, staleTime: 30_000 },
   });
   const engineConfigTuple = engineConfigData as readonly bigint[] | undefined;
   const maxLockEpochs = engineConfigTuple?.[17] ?? 0n;
@@ -2469,34 +2729,33 @@ function GraduateModal({
     abi: nara4EngineAbi,
     functionName: "previewWeight",
     args: [lockedPrincipal, maxLockEpochs],
-    query: { enabled: !!NARA_ENGINE_V4 && lockedPrincipal > 0n && maxLockEpochs > 0n, staleTime: 15_000 },
+    query: { enabled: canExit && !!NARA_ENGINE_V4 && lockedPrincipal > 0n && maxLockEpochs > 0n, staleTime: 15_000 },
   });
   const previewWeight = (previewWeightData as bigint | undefined) ?? 0n;
 
-  const ready = lockedPrincipal > 0n && maxLockEpochs > 0n;
+  const ready = canExit && lockedPrincipal > 0n && maxLockEpochs > 0n;
 
   return (
-    <div className="nb-modal-overlay" onClick={onClose}>
-      <div className="nb-modal" onClick={(e) => e.stopPropagation()}>
+    <AccessibleModal onClose={onClose} titleId="lock-nara-title">
         <div className="nb-modal-header">
-          <div className="nb-modal-title">Lock basket NARA</div>
-          <button className="nb-panel-close" style={{ position: "static" }} onClick={onClose}>
+          <div className="nb-modal-title" id="lock-nara-title">Lock basket $NARA</div>
+          <button aria-label="Close lock review" className="nb-panel-close" style={{ position: "static" }} onClick={onClose}>
             ×
           </button>
         </div>
 
         <div className="nb-modal-body">
           <div className="nb-modal-row">
-            <span>Basket NARA</span>
-            <span>{formatTokenAmount(grossNara, 18)} NARA</span>
+            <span>Basket $NARA</span>
+            <span>{formatTokenAmount(grossNara, 18)} $NARA</span>
           </div>
           <div className="nb-modal-row">
             <span>Withdrawal fee</span>
-            <span>−{formatTokenAmount(grossNara - netNara, 18)} NARA</span>
+            <span>−{formatTokenAmount(grossNara - netNara, 18)} $NARA</span>
           </div>
           <div className="nb-modal-row strong">
             <span>Locked amount</span>
-            <span>≈{formatTokenAmount(lockedPrincipal, 18)} NARA</span>
+            <span>≈{formatTokenAmount(lockedPrincipal, 18)} $NARA</span>
           </div>
           <div className="nb-modal-row">
             <span>Lock duration</span>
@@ -2513,12 +2772,12 @@ function GraduateModal({
         </div>
 
         <div className="nb-modal-warn">
-          NARA leaves this basket position and locks in the NARA engine as a new position NFT.
+          $NARA leaves this basket position and locks in the NARA engine as a new position NFT.
         </div>
         <div className="nb-risk-lines compact">
           <div>You are choosing this lock yourself.</div>
           <div>This interface does not guide lock duration or amount.</div>
-          <div>Locked NARA is not liquid until the position matures.</div>
+          <div>Locked $NARA is not liquid until the position matures.</div>
         </div>
 
         <div className="nb-modal-actions">
@@ -2541,8 +2800,7 @@ function GraduateModal({
             )}
           </button>
         </div>
-      </div>
-    </div>
+    </AccessibleModal>
   );
 }
 
@@ -2853,18 +3111,35 @@ function SettingsPopover({
   setDeadlineMin: (min: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const presets = [10, 50, 100]; // 0.1% / 0.5% / 1.0%
   const isPreset = presets.includes(slippageBps);
   const warnHigh = slippageBps > 100;
   const warnLow = slippageBps < 5;
 
+  useEffect(() => {
+    if (!open) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [open]);
+
   return (
     <div className="nb-settings-wrap">
       <button
+        ref={triggerRef}
         className={`nb-settings-btn${open ? " active" : ""}`}
         onClick={() => setOpen((v) => !v)}
         title="Transaction settings"
         aria-label="Transaction settings"
+        aria-expanded={open}
+        aria-controls="transaction-settings-popover"
+        aria-haspopup="dialog"
       >
         {/* Gear SVG — more consistent than ⚙ across platforms */}
         <svg width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -2878,11 +3153,16 @@ function SettingsPopover({
       </button>
       {open && (
         <>
-          <div style={{ position: "fixed", inset: 0, zIndex: 19 }} onClick={() => setOpen(false)} />
-          <div className="nb-settings-pop">
+          <div aria-hidden="true" style={{ position: "fixed", inset: 0, zIndex: 19 }} onClick={() => setOpen(false)} />
+          <div
+            className="nb-settings-pop"
+            id="transaction-settings-popover"
+            role="dialog"
+            aria-label="Transaction settings"
+          >
             <div className="nb-settings-title">Transaction settings</div>
 
-            <div className="nb-settings-label">Slippage tolerance</div>
+            <label className="nb-settings-label" htmlFor="transaction-slippage">Slippage tolerance</label>
             <div className="nb-slip-chips">
               {presets.map((bps) => (
                 <button
@@ -2896,8 +3176,10 @@ function SettingsPopover({
             </div>
             <div className="nb-slip-custom">
               <input
+                id="transaction-slippage"
                 type="number"
                 min="0"
+                max={(MAX_USER_SLIPPAGE_BPS / 100).toString()}
                 step="0.1"
                 inputMode="decimal"
                 placeholder="Custom"
@@ -2905,7 +3187,7 @@ function SettingsPopover({
                 onChange={(e) => {
                   const pct = parseFloat(e.target.value);
                   if (Number.isFinite(pct)) {
-                    setSlippageBps(Math.max(0, Math.min(5000, Math.round(pct * 100))));
+                    setSlippageBps(Math.max(0, Math.min(MAX_USER_SLIPPAGE_BPS, Math.round(pct * 100))));
                   }
                 }}
               />
@@ -2918,11 +3200,13 @@ function SettingsPopover({
               <div className="nb-settings-warn">Very low slippage — the transaction may fail.</div>
             )}
 
-            <div className="nb-settings-label">Transaction deadline</div>
+            <label className="nb-settings-label" htmlFor="transaction-deadline">Transaction deadline</label>
             <div className="nb-slip-custom">
               <input
+                id="transaction-deadline"
                 type="number"
                 min="1"
+                max="60"
                 step="1"
                 inputMode="numeric"
                 value={deadlineMin.toString()}
@@ -2952,11 +3236,10 @@ function BasketSelectModal({
   onClose: () => void;
 }) {
   return (
-    <div className="nb-modal-overlay" onClick={onClose}>
-      <div className="nb-modal" onClick={(e) => e.stopPropagation()}>
+    <AccessibleModal onClose={onClose} titleId="basket-select-title">
         <div className="nb-modal-header">
-          <div className="nb-modal-title">Select a basket</div>
-          <button className="nb-panel-close" style={{ position: "static" }} onClick={onClose}>
+          <div className="nb-modal-title" id="basket-select-title">Select a basket</div>
+          <button aria-label="Close basket selection" className="nb-panel-close" style={{ position: "static" }} onClick={onClose}>
             ×
           </button>
         </div>
@@ -2967,17 +3250,12 @@ function BasketSelectModal({
             const status = basketStatus(cfg);
             const exitOnly = status === "exit_only";
             const previewOnly = status === "preview";
-            const disabled = !configured || exitOnly || previewOnly;
-            const badge = !configured || previewOnly ? "Coming soon" : exitOnly ? "Exit only" : "Basket";
+            const badge = previewOnly ? "Preview" : exitOnly ? "Exit only" : configured ? "Live" : "Not deployed";
             return (
               <button
                 key={cfg.key}
-                className={`nb-basket-row${disabled ? " disabled" : ""}${
-                  selectedKey === cfg.key ? " selected" : ""
-                }`}
-                disabled={disabled}
+                className={`nb-basket-row${selectedKey === cfg.key ? " selected" : ""}`}
                 onClick={() => {
-                  if (disabled) return;
                   onSelect(cfg.key);
                   onClose();
                 }}
@@ -2996,8 +3274,7 @@ function BasketSelectModal({
             );
           })}
         </div>
-      </div>
-    </div>
+    </AccessibleModal>
   );
 }
 
@@ -3057,7 +3334,7 @@ function ShareCardModal({ data, onClose }: { data: BasketShareData; onClose: () 
       ctx.textBaseline = "alphabetic";
       ctx.fillStyle = accent;
       ctx.font = "700 22px Inter, system-ui, sans-serif";
-      ctx.fillText("NARA BASKETS", left, y);
+      ctx.fillText("NARA", left, y);
 
       y += 76;
       ctx.fillStyle = text;
@@ -3072,7 +3349,7 @@ function ShareCardModal({ data, onClose }: { data: BasketShareData; onClose: () 
       y += 52;
       ctx.fillStyle = muted;
       ctx.font = "500 22px 'IBM Plex Mono', monospace";
-      ctx.fillText(data.symbols.join("  ·  "), left, y);
+      ctx.fillText(data.symbols.map(displayTokenSymbol).join("  ·  "), left, y);
 
       ctx.fillStyle = muted;
       ctx.font = "500 18px Inter, system-ui, sans-serif";
@@ -3100,12 +3377,12 @@ function ShareCardModal({ data, onClose }: { data: BasketShareData; onClose: () 
     }, "image/png");
   };
 
-  const shareText = `I bought the ${data.basketName} basket on NARA Baskets — on-chain, non-custodial.`;
+  const shareText = `I bought the ${data.basketName} basket on NARA — on-chain, non-custodial.`;
 
   const handleShare = async () => {
     if (canShareApi) {
       try {
-        await navigator.share({ title: "NARA Baskets", text: shareText, url: window.location.origin });
+        await navigator.share({ title: "NARA", text: shareText, url: window.location.origin });
       } catch {
         // User cancelled the native share sheet — not an error.
       }
@@ -3121,11 +3398,10 @@ function ShareCardModal({ data, onClose }: { data: BasketShareData; onClose: () 
   };
 
   return (
-    <div className="nb-modal-overlay" onClick={onClose}>
-      <div className="nb-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+    <AccessibleModal onClose={onClose} titleId="position-opened-title" panelStyle={{ maxWidth: 480 }}>
         <div className="nb-modal-header">
-          <div className="nb-modal-title">Position opened</div>
-          <button className="nb-panel-close" style={{ position: "static" }} onClick={onClose}>
+          <div className="nb-modal-title" id="position-opened-title">Position opened</div>
+          <button aria-label="Close position summary" className="nb-panel-close" style={{ position: "static" }} onClick={onClose}>
             ×
           </button>
         </div>
@@ -3143,8 +3419,7 @@ function ShareCardModal({ data, onClose }: { data: BasketShareData; onClose: () 
             {shareState === "copied" ? "Copied" : canShareApi ? "Share" : "Copy"}
           </button>
         </div>
-      </div>
-    </div>
+    </AccessibleModal>
   );
 }
 
@@ -3158,15 +3433,7 @@ export default function App() {
   const { switchChain } = useSwitchChain();
   const wrongNetwork = isConnected && chainId !== BASE_CHAIN_ID;
   const isOnBase = !isConnected || chainId === BASE_CHAIN_ID;
-  const [tab, setTab] = useState<"trade" | "portfolio" | "referral">("trade");
-  // Read ?ref= from URL once on mount — the referred buyer passes this to buildBuyParams.
-  const [urlReferrer] = useState<`0x${string}` | null>(() => {
-    try {
-      const raw = new URLSearchParams(window.location.search).get("ref");
-      if (raw && /^0x[0-9a-fA-F]{40}$/.test(raw)) return raw as `0x${string}`;
-    } catch { /* ignore */ }
-    return null;
-  });
+  const [tab, setTab] = useState<"trade" | "portfolio">("trade");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [basketModalOpen, setBasketModalOpen] = useState(false);
   // Slippage in bps (50 = 0.5%), deadline in minutes. Editable via the settings gear.
@@ -3179,6 +3446,7 @@ export default function App() {
   const [positions, setPositions] = useState<EnrichedPosition[]>([]);
   const [positionsLoading, setPositionsLoading] = useState(false);
   const [sellModal, setSellModal] = useState<SellModalState | null>(null);
+  const [refreshingExitQuote, setRefreshingExitQuote] = useState(false);
   const [manualReceipts, setManualReceipts] = useState<Array<{ basketKey: string; tokenId: bigint }>>([]);
   const [recoverTokenIdInput, setRecoverTokenIdInput] = useState("");
   const [recoveringTokenId, setRecoveringTokenId] = useState(false);
@@ -3199,6 +3467,14 @@ export default function App() {
     setAppFlash({ type: "error", msg: "Switch to Base before signing this transaction." });
     return false;
   }, [isOnBase]);
+  const requirePositionCanExit = useCallback((position: EnrichedPosition) => {
+    if (positionCanExit(position)) return true;
+    setAppFlash({
+      type: "error",
+      msg: "Exit actions are disabled unless this basket is explicitly live or exit-only and its manager matches the launch configuration.",
+    });
+    return false;
+  }, []);
   const [pairsByBasket, setPairsByBasket] = useState<Record<string, PairsBySymbol>>({});
   const [pairsLoading, setPairsLoading] = useState(true);
 
@@ -3328,7 +3604,7 @@ export default function App() {
 
     for (const config of BASKET_CONFIGS) {
       const managerAddr = BASKET_MANAGERS[config.key];
-      if (!managerAddr) continue;
+      if (!managerAddr || !basketManagerCanExit(basketStatus(config), managerAddr)) continue;
 
       // ── Index positions via BasketBought(receiver) event ─────────────────
       // Falls back through progressively smaller block ranges if the RPC limits
@@ -3414,50 +3690,29 @@ export default function App() {
           const assetFeeTiers = metas.map((m) => m.feeTier);
           const assetColors = metas.map((m) => m.color);
 
-          // Run USDC and NARA quotes in parallel — routes via Aerodrome or Uniswap V3
-          // per each asset's selected live route.
-          const [assetUsdcRouteQuotes, assetNaraRouteQuotes] = await Promise.all([
-            buildSellRouteQuotes(
-              publicClient,
-              config,
-              assetAddresses,
-              assetAmounts,
-              NARA_TOKEN,
-              USDC_ADDRESS,
-              pairsByBasket[config.key],
-              positionEnabledVenues,
-            ),
-            NARA_TOKEN
-              ? buildSellRouteQuotes(
-                  publicClient,
-                  config,
-                  assetAddresses,
-                  assetAmounts,
-                  NARA_TOKEN,
-                  NARA_TOKEN as `0x${string}`,
-                  pairsByBasket[config.key],
-                  positionEnabledVenues,
-                )
-              : Promise.resolve(
-                  assetAddresses.map((addr) => ({
-                    call: {
-                      dex: "direct" as const,
-                      tokenIn: addr,
-                      tokenOut: USDC_ADDRESS,
-                      amountIn: 0n,
-                    },
-                    quote: 0n,
-                  })),
-                ),
-          ]);
+          // Preview only the executable USDC exit. Raw-token withdrawal remains
+          // available for every underlying leg, including NARA.
+          const assetUsdcRouteQuotes = await buildSellRouteQuotes(
+            publicClient,
+            config,
+            assetAddresses,
+            assetAmounts,
+            NARA_TOKEN,
+            USDC_ADDRESS,
+            pairsByBasket[config.key],
+            positionEnabledVenues,
+          );
 
           const assetUsdcValues = assetUsdcRouteQuotes.map((route) => route.quote);
-          const assetNaraValues = assetNaraRouteQuotes.map((route) => route.quote);
           const assetUsdcRoutes = assetUsdcRouteQuotes.map((route) => route.call);
-          const assetNaraRoutes = assetNaraRouteQuotes.map((route) => route.call);
+          const assetUsdcHookFees = assetUsdcRouteQuotes.map((route) => route.hookFee);
+          const quotesLoaded = assetUsdcValues.every((quote, index) =>
+            (assetAmounts[index] ?? 0n) === 0n ||
+            sameAddress(assetAddresses[index], USDC_ADDRESS) ||
+            quote > 0n,
+          );
 
           const currentValueUsdc = assetUsdcValues.reduce((a, b) => a + b, 0n);
-          const currentValueNara = assetNaraValues.reduce((a, b) => a + b, 0n);
           // Cost basis is stored in the position's payment token. WETH-paid positions
           // store grossInput/buyFee in 1e18, so convert to USDC before comparing with
           // currentValueUsdc (USDC-denominated) — otherwise cost/PnL is nonsense.
@@ -3494,14 +3749,12 @@ export default function App() {
             assetColors,
             assetUsdcValues,
             assetUsdcRoutes,
+            assetUsdcHookFees,
             currentValueUsdc,
             netCostUsdc,
             pnlUsdc,
             pnlPercent,
-            assetNaraValues,
-            assetNaraRoutes,
-            currentValueNara,
-            quotesLoaded: true,
+            quotesLoaded,
           });
         } catch {
           // Skip positions that can't be read (transferred away, etc.)
@@ -3542,7 +3795,7 @@ export default function App() {
     if (graduateBatchConfirmed) {
       setGraduateModal(null);
       setGraduating(false);
-      setAppFlash({ type: "success", msg: "NARA locked. Check your wallet for the new position NFT." });
+      setAppFlash({ type: "success", msg: "$NARA locked. Check your wallet for the new position NFT." });
       fetchPositions();
       resetGraduateBatch();
     } else if (graduateBatchFailed) {
@@ -3554,10 +3807,14 @@ export default function App() {
 
   const handleGraduateConfirm = async () => {
     if (!graduateModal || !address || !publicClient) return;
+    const position = graduateModal;
+    if (!requirePositionCanExit(position)) {
+      setGraduateModal(null);
+      return;
+    }
     if (!requireBaseForWrite()) return;
     if (!NARA_ENGINE_V4 || !NARA_POSITION_NFT_V4 || !NARA_ROUTER_V4 || !NARA_TOKEN) return;
 
-    const position = graduateModal;
     const naraAssetIndex = position.assetSymbols.indexOf("NARA");
     const grossNara = naraAssetIndex >= 0 ? (position.assetAmounts[naraAssetIndex] ?? 0n) : 0n;
     if (grossNara <= 0n) return;
@@ -3703,7 +3960,7 @@ export default function App() {
       await publicClient.waitForTransactionReceipt({ hash: lockTx });
 
       setGraduateModal(null);
-      setAppFlash({ type: "success", msg: "NARA locked. Check your wallet for the new position NFT." });
+      setAppFlash({ type: "success", msg: "$NARA locked. Check your wallet for the new position NFT." });
       fetchPositions();
     } catch (e) {
       setAppFlash({ type: "error", msg: friendlyTxError(e) });
@@ -3725,7 +3982,7 @@ export default function App() {
     try {
       for (const config of BASKET_CONFIGS) {
         const managerAddr = BASKET_MANAGERS[config.key];
-        if (!managerAddr) continue;
+        if (!managerAddr || !basketManagerCanExit(basketStatus(config), managerAddr)) continue;
         try {
           const owner = await publicClient.readContract({
             address: managerAddr,
@@ -3754,10 +4011,26 @@ export default function App() {
     }
   };
 
-  const handleSellConfirm = async () => {
-    if (!sellModal || !address || !BASKET_ADAPTER_V3 || !publicClient) return;
+  const handleOpenSell = (position: EnrichedPosition, assetIndexes?: number[]) => {
+    if (!requirePositionCanExit(position)) return;
+    setSellModal({ position, assetIndexes });
+  };
+
+  const handleOpenGraduate = (position: EnrichedPosition) => {
+    if (!requirePositionCanExit(position)) return;
     if (!requireBaseForWrite()) return;
-    const { position, outputToken } = sellModal;
+    setGraduateModal(position);
+  };
+
+  const handleSellConfirm = async () => {
+    if (!sellModal) return;
+    const { position } = sellModal;
+    if (!requirePositionCanExit(position)) {
+      setSellModal(null);
+      return;
+    }
+    if (!address || !BASKET_ADAPTER_V3 || !publicClient || refreshingExitQuote) return;
+    if (!requireBaseForWrite()) return;
     const config = BASKET_CONFIGS.find((b) => b.key === position.basketKey);
     if (!config) return;
     if (config.assets.some((a) => a.dex === "aerodrome") && !BASKET_ADAPTER_AERO) {
@@ -3765,51 +4038,113 @@ export default function App() {
       return;
     }
 
-    const isNara = outputToken === "nara";
-    if (isNara && !NARA_TOKEN) return;
-    const outputTokenAddr = isNara ? (NARA_TOKEN as `0x${string}`) : USDC_ADDRESS;
-    const sellQuotes = isNara ? position.assetNaraValues : position.assetUsdcValues;
-    const sellRoutes = isNara ? position.assetNaraRoutes : position.assetUsdcRoutes;
-    const selectedIndexes =
-      sellModal.assetIndexes && sellModal.assetIndexes.length > 0
-        ? sellModal.assetIndexes
-        : position.assetAddresses.map((_, i) => i);
-    const selectedRoutes = sellRoutes.filter((route, i) =>
-      selectedIndexes.includes(i) &&
-      (position.assetAmounts[i] ?? 0n) > 0n &&
-      !sameAddress(position.assetAddresses[i], outputTokenAddr) &&
-      route.dex !== "direct",
-    );
-    if (selectedRoutes.some((route) => route.dex === "aerodrome") && !BASKET_ADAPTER_AERO) {
-      setAppFlash({ type: "error", msg: "Exit route unavailable: Aerodrome adapter not configured." });
-      return;
-    }
-    if (selectedRoutes.some((route) => route.dex === "slipstream") && !BASKET_ADAPTER_SLIPSTREAM) {
-      setAppFlash({ type: "error", msg: "Exit route unavailable: Slipstream adapter not configured." });
-      return;
-    }
-    if (selectedRoutes.some((route) => route.dex === "pancake_v3") && !BASKET_ADAPTER_PANCAKE) {
-      setAppFlash({ type: "error", msg: "Exit route unavailable: PancakeSwap V3 adapter not configured." });
-      return;
-    }
-    if (selectedRoutes.some((route) => route.dex === "uniswap_v4") && !BASKET_ADAPTER_V4) {
-      setAppFlash({ type: "error", msg: "Exit route unavailable: Uniswap V4 adapter not configured." });
-      return;
-    }
-    const grossQuote = selectedIndexes.reduce((sum, i) => sum + (sellQuotes[i] ?? 0n), 0n);
-    if (grossQuote <= 0n) return;
-
+    setRefreshingExitQuote(true);
     try {
+      const [assetAddresses, assetAmounts] = await publicClient.readContract({
+        address: position.managerAddress,
+        abi: basketManagerAbi,
+        functionName: "positionAmounts",
+        args: [position.tokenId],
+      }) as readonly [`0x${string}`[], bigint[]];
+      const freshRouteQuotes = await buildSellRouteQuotes(
+        publicClient,
+        config,
+        assetAddresses,
+        assetAmounts,
+        NARA_TOKEN,
+        USDC_ADDRESS,
+        pairsByBasket[config.key],
+        positionEnabledVenues,
+      );
+      const sellQuotes = freshRouteQuotes.map((route) => route.quote);
+      const sellRoutes = freshRouteQuotes.map((route) => route.call);
+      const sellHookFees = freshRouteQuotes.map((route) => route.hookFee);
+      const selectedIndexes =
+        sellModal.assetIndexes && sellModal.assetIndexes.length > 0
+          ? sellModal.assetIndexes
+          : assetAddresses.map((_, index) => index);
+      const activeIndexes = selectedIndexes.filter((index) => (assetAmounts[index] ?? 0n) > 0n);
+      const selectedRoutes = sellRoutes.filter((route, index) =>
+        selectedIndexes.includes(index) &&
+        (assetAmounts[index] ?? 0n) > 0n &&
+        !sameAddress(assetAddresses[index], USDC_ADDRESS) &&
+        route.dex !== "direct",
+      );
+      if (selectedRoutes.some((route) => route.dex === "aerodrome") && !BASKET_ADAPTER_AERO) {
+        throw new Error("Exit route unavailable: Aerodrome adapter not configured");
+      }
+      if (selectedRoutes.some((route) => route.dex === "slipstream") && !BASKET_ADAPTER_SLIPSTREAM) {
+        throw new Error("Exit route unavailable: Slipstream adapter not configured");
+      }
+      if (selectedRoutes.some((route) => route.dex === "pancake_v3") && !BASKET_ADAPTER_PANCAKE) {
+        throw new Error("Exit route unavailable: PancakeSwap V3 adapter not configured");
+      }
+      if (selectedRoutes.some((route) => route.dex === "uniswap_v4") && !BASKET_ADAPTER_V4) {
+        throw new Error("Exit route unavailable: Uniswap V4 adapter not configured");
+      }
+      const grossQuote = selectedIndexes.reduce((sum, index) => sum + (sellQuotes[index] ?? 0n), 0n);
+      if (grossQuote <= 0n) throw new Error("Fresh exit quote is unavailable");
+      const currentValueUsdc = sellQuotes.reduce((sum, quote) => sum + quote, 0n);
+      const pnlUsdc = currentValueUsdc - position.netCostUsdc;
+      const pnlPercent = position.netCostUsdc > 0n
+        ? Number((pnlUsdc * 10_000n) / position.netCostUsdc) / 100
+        : 0;
+      setSellModal((current) =>
+        current &&
+        current.position.tokenId === position.tokenId &&
+        sameAddress(current.position.managerAddress, position.managerAddress)
+          ? {
+              ...current,
+              position: {
+                ...current.position,
+                assetAddresses: [...assetAddresses],
+                assetAmounts: [...assetAmounts],
+                assetUsdcValues: sellQuotes,
+                assetUsdcRoutes: sellRoutes,
+                assetUsdcHookFees: sellHookFees,
+                currentValueUsdc,
+                pnlUsdc,
+                pnlPercent,
+                quotesLoaded: sellQuotes.every((quote, index) =>
+                  (assetAmounts[index] ?? 0n) === 0n ||
+                  sameAddress(assetAddresses[index], USDC_ADDRESS) ||
+                  quote > 0n,
+                ),
+              },
+            }
+          : current,
+      );
+      const positionChanged =
+        position.assetAddresses.length !== assetAddresses.length ||
+        position.assetAmounts.length !== assetAmounts.length ||
+        activeIndexes.some((index) =>
+          !sameAddress(position.assetAddresses[index], assetAddresses[index]) ||
+          position.assetAmounts[index] !== assetAmounts[index],
+        );
+      const hookFeeIndexes = activeIndexes.filter((index) => sellRoutes[index]?.dex === "uniswap_v4");
+      if (
+        positionChanged ||
+        refreshedQuotesRequireReview(position.assetUsdcValues, sellQuotes, slippageBps, activeIndexes) ||
+        refreshedHookFeesRequireReview(position.assetUsdcHookFees, sellHookFees, hookFeeIndexes)
+      ) {
+        setAppFlash({
+          type: "warning",
+          msg: "The live position, exit quote, or estimated $NARA Hook fee changed. Review the updated USDC output, then confirm again.",
+        });
+        return;
+      }
+      const executionQuotes = protectedExecutionQuotes(position.assetUsdcValues, sellQuotes);
+
       if (sellModal.assetIndexes && sellModal.assetIndexes.length > 0) {
         const params = buildPartialSellParams(
           position.tokenId,
-          position.assetAddresses,
-          position.assetAmounts,
-          sellQuotes,
+          assetAddresses,
+          assetAmounts,
+          executionQuotes,
           selectedIndexes,
           address,
           BASKET_ADAPTER_V3 as `0x${string}`,
-          outputTokenAddr,
+          USDC_ADDRESS,
           config.sellFeeBps,
           config,
           NARA_TOKEN,
@@ -3842,12 +4177,12 @@ export default function App() {
       } else {
         const params = buildSellParams(
           position.tokenId,
-          position.assetAddresses,
-          position.assetAmounts,
-          sellQuotes,
+          assetAddresses,
+          assetAmounts,
+          executionQuotes,
           address,
           BASKET_ADAPTER_V3 as `0x${string}`,
-          outputTokenAddr,
+          USDC_ADDRESS,
           config.sellFeeBps,
           config,
           NARA_TOKEN,
@@ -3888,27 +4223,35 @@ export default function App() {
       setAppFlash({
         type: "error",
         msg: liquidityRelated
-          ? "The live exit quote changed or lacks depth. Retry, or use Withdraw tokens to receive the underlying assets without swaps."
-          : "Exit failed on-chain. No state was changed. Withdraw tokens remains available without swaps.",
+          ? "The live exit quote changed or lacks depth. Retry, or request Withdraw tokens to receive the underlying assets without swaps. The withdrawal transaction can still fail."
+          : "Exit failed on-chain. No state was changed. You can try a direct token-withdrawal request, which does not use swaps but can still fail.",
       });
+    } finally {
+      setRefreshingExitQuote(false);
     }
   };
 
   // Withdraw triggers an in-app confirm, not window.confirm.
   const handleWithdraw = (position: EnrichedPosition) => {
+    if (!requirePositionCanExit(position)) return;
     if (!requireBaseForWrite()) return;
     setWithdrawConfirm({ position, assetIndex: null });
   };
 
   const handleWithdrawAsset = (position: EnrichedPosition, assetIndex: number) => {
+    if (!requirePositionCanExit(position)) return;
     if (!requireBaseForWrite()) return;
     setWithdrawConfirm({ position, assetIndex });
   };
 
   const executeWithdraw = async () => {
     if (!withdrawConfirm || !address || !publicClient) return;
-    if (!requireBaseForWrite()) return;
     const { position, assetIndex } = withdrawConfirm;
+    if (!requirePositionCanExit(position)) {
+      setWithdrawConfirm(null);
+      return;
+    }
+    if (!requireBaseForWrite()) return;
     setWithdrawConfirm(null);
     try {
       if (assetIndex !== null) {
@@ -3965,7 +4308,15 @@ export default function App() {
     }
   };
 
-  const anyLive = BASKET_CONFIGS.some((b) => BASKET_MANAGERS[b.key] !== null);
+  const hasLiveBasket = BASKET_CONFIGS.some(
+    (basket) => BASKET_MANAGERS[basket.key] !== null && basketStatus(basket) === "live",
+  );
+  const hasPreviewBasket = BASKET_CONFIGS.some(
+    (basket) => basketStatus(basket) === "preview",
+  );
+  const hasExitBasket = BASKET_CONFIGS.some((basket) =>
+    basketManagerCanExit(basketStatus(basket), BASKET_MANAGERS[basket.key]),
+  );
   const totalValue = positions.reduce((a, p) => a + p.currentValueUsdc, 0n);
   const totalPnl = positions.reduce((a, p) => a + p.pnlUsdc, 0n);
   const totalPnlSign = totalPnl > 0n ? "+" : totalPnl < 0n ? "−" : "";
@@ -3976,8 +4327,8 @@ export default function App() {
       {/* ─── Header ─────────────────────────────────────────────────── */}
       <div className="nb-header">
         <div className="nb-header-left">
-          <h1>NARA Baskets</h1>
-          <p>Predefined baskets on Base. One transaction. On chain execution.</p>
+          <h1>NARA</h1>
+          <p>$NARA category baskets on Base. One transaction. On-chain execution.</p>
         </div>
         <ConnectButton />
       </div>
@@ -3986,7 +4337,7 @@ export default function App() {
       {wrongNetwork && (
         <div className="nb-swap-wrap" style={{ marginBottom: 12 }}>
           <div className="nb-flash error" role="status" aria-live="polite" style={{ marginBottom: 0, textAlign: "center" }}>
-            Wrong network. Switch to Base to use NARA Baskets.
+            Wrong network. Switch to Base to use NARA.
           </div>
         </div>
       )}
@@ -4006,10 +4357,12 @@ export default function App() {
         </div>
       )}
 
-      {!anyLive && (
+      {!hasLiveBasket && (
         <div className="nb-swap-wrap" style={{ marginBottom: 16 }}>
           <div className="nb-flash neutral" style={{ marginBottom: 0 }}>
-            Preview mode. Buying opens after contract deployment.
+            {hasPreviewBasket
+              ? "Preview mode. Buying remains disabled until basket contracts are deployed, verified, and explicitly activated."
+              : "New buys are disabled. Existing receipts can still be reviewed in Portfolio."}
           </div>
         </div>
       )}
@@ -4032,12 +4385,6 @@ export default function App() {
                 >
                   Portfolio{positions.length > 0 ? ` · ${positions.length}` : ""}
                 </button>
-                <button
-                  className={`nb-tab${tab === "referral" ? " active" : ""}`}
-                  onClick={() => setTab("referral")}
-                >
-                  Referral
-                </button>
               </div>
               {/* Chain indicator — always visible */}
               <div className="nb-epoch-pill" style={{ fontSize: 10, marginLeft: "auto" }}>
@@ -4054,20 +4401,12 @@ export default function App() {
             )}
           </div>
 
-          {/* URL referrer indicator — shown in Trade tab so referred buyers see they're contributing to someone's rewards */}
-          {tab === "trade" && urlReferrer && (
-            <div className="nb-flash neutral" style={{ marginBottom: 10, fontSize: 10 }}>
-              Referred buy active. The configured referral share may credit the referrer.
-            </div>
-          )}
-
           {tab === "trade" ? (
             <BuyFlow
               config={selectedConfig}
               pairsBySymbol={selectedConfig ? pairsByBasket[selectedConfig.key] : undefined}
               slippageBps={slippageBps}
               deadlineMin={deadlineMin}
-              urlReferrer={urlReferrer}
               isOnBase={isOnBase}
               onOpenBasketModal={() => setBasketModalOpen(true)}
               onSuccess={(share) => {
@@ -4076,7 +4415,7 @@ export default function App() {
                 if (share) setShareCard(share);
               }}
             />
-          ) : tab === "portfolio" ? (
+          ) : (
             <div>
               {positions.length > 0 && !positionsLoading && (
                 <div className="nb-pos-metrics" style={{ marginBottom: 14 }}>
@@ -4101,7 +4440,7 @@ export default function App() {
                 </div>
               )}
 
-              {isConnected && (
+              {isConnected && hasExitBasket && (
                 <div className="nb-receipt-recovery">
                   <input
                     aria-label="Receipt ID"
@@ -4145,23 +4484,16 @@ export default function App() {
                   <PositionCard
                     key={`${p.basketKey}-${p.tokenId}`}
                     position={p}
-                    onSell={(pos, outputToken, assetIndexes) =>
-                      setSellModal({ position: pos, outputToken, assetIndexes })
-                    }
+                    onSell={handleOpenSell}
                     onWithdraw={handleWithdraw}
                     onWithdrawAsset={handleWithdrawAsset}
-                    onGraduate={(pos) => {
-                      if (!requireBaseForWrite()) return;
-                      setGraduateModal(pos);
-                    }}
+                    onGraduate={handleOpenGraduate}
                     withdrawing={withdrawing || withdrawBatching}
                     isOnBase={isOnBase}
                   />
                 ))
               )}
             </div>
-          ) : (
-            <ReferralPanel address={address} isConnected={isConnected} isOnBase={isOnBase} />
           )}
         </div>
       </div>
@@ -4171,8 +4503,11 @@ export default function App() {
         <div className="nb-protocol-note" style={{ maxWidth: "100%" }}>
           <p>
             Non-custodial. On chain. You hold the receipt NFT; the basket contract holds the
-            underlying tokens. Exit anytime: sell to USDC, convert to NARA when quoted, or
-            withdraw constituent tokens directly from the contract. Not financial advice. Digital asset
+            underlying tokens. After a basket is explicitly activated as live or exit-only, its exit paths are a
+            USDC sell when routes have liquidity or a direct request to withdraw constituent tokens. Preview-only
+            baskets permit no exit writes. Transactions can fail, and token restrictions can block a transfer.
+            Eligible basket $NARA can also be withdrawn and locked through a separate review after activation.
+            Not financial advice. Digital asset
             values can go down to zero.
           </p>
 
@@ -4216,35 +4551,38 @@ export default function App() {
       </div>
 
       {/* ─── Withdraw confirmation modal (replaces window.confirm) ────── */}
-      {withdrawConfirm && (
-        <div className="nb-modal-overlay" onClick={() => setWithdrawConfirm(null)}>
-          <div className="nb-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
+      {withdrawConfirm && positionCanExit(withdrawConfirm.position) && (
+        <AccessibleModal
+          onClose={() => setWithdrawConfirm(null)}
+          titleId="withdraw-position-title"
+          panelStyle={{ maxWidth: 400 }}
+        >
             <div className="nb-modal-header">
-              <div className="nb-modal-title">
+              <div className="nb-modal-title" id="withdraw-position-title">
                 {withdrawConfirm.assetIndex !== null
-                  ? `Withdraw ${withdrawConfirm.position.assetSymbols[withdrawConfirm.assetIndex] ?? "token"}`
+                  ? `Withdraw ${displayTokenSymbol(withdrawConfirm.position.assetSymbols[withdrawConfirm.assetIndex] ?? "token")}`
                   : "Withdraw all tokens"}
               </div>
-              <button className="nb-panel-close" style={{ position: "static" }} onClick={() => setWithdrawConfirm(null)}>×</button>
+              <button aria-label="Close withdrawal review" className="nb-panel-close" style={{ position: "static" }} onClick={() => setWithdrawConfirm(null)}>×</button>
             </div>
             <div className="nb-modal-body">
               {withdrawConfirm.assetIndex !== null ? (
                 <div className="nb-modal-row">
                   <span>
-                    Withdraw only {withdrawConfirm.position.assetSymbols[withdrawConfirm.assetIndex] ?? "this token"} to
-                    your wallet. The receipt NFT stays open if other tokens remain. Does not convert to USDC or NARA.
+                    Withdraw only {displayTokenSymbol(withdrawConfirm.position.assetSymbols[withdrawConfirm.assetIndex] ?? "this token")} to
+                    your wallet. The receipt NFT stays open if other tokens remain. Does not convert to USDC or $NARA.
                   </span>
                 </div>
               ) : (
                 <div className="nb-modal-row">
                   <span>
                     Withdraw all basket tokens to your wallet. This burns the receipt NFT. Does not convert to USDC or
-                    NARA — you receive the raw tokens directly.
+                    $NARA — you receive the raw tokens directly.
                   </span>
                 </div>
               )}
             </div>
-            <div className="nb-modal-warn">An in-kind fee applies on withdrawal. Cannot be undone.</div>
+            <div className="nb-modal-warn">No in-kind withdrawal fee applies. This action cannot be undone.</div>
             <div className="nb-risk-lines compact">
               <div>You are choosing this withdrawal yourself.</div>
               <div>Token values can go down.</div>
@@ -4257,8 +4595,7 @@ export default function App() {
                 {isOnBase ? "Confirm Withdrawal" : "Switch to Base"}
               </button>
             </div>
-          </div>
-        </div>
+        </AccessibleModal>
       )}
 
       {/* ─── Basket select modal ─────────────────────────────────────── */}
@@ -4271,19 +4608,12 @@ export default function App() {
       )}
 
       {/* ─── Sell modal ───────────────────────────────────────────────── */}
-      {sellModal && (
+      {sellModal && positionCanExit(sellModal.position) && (
         <SellModal
           state={sellModal}
-          onToggleOutput={() =>
-            setSellModal((prev) =>
-              prev
-                ? { ...prev, outputToken: prev.outputToken === "usdc" ? "nara" : "usdc" }
-                : prev,
-            )
-          }
           onConfirm={handleSellConfirm}
           onClose={() => setSellModal(null)}
-          selling={selling || sellBatching}
+          selling={selling || sellBatching || refreshingExitQuote}
           gasless={canSponsorExit}
           slippageBps={slippageBps}
           isOnBase={isOnBase}
@@ -4294,7 +4624,7 @@ export default function App() {
       {shareCard && <ShareCardModal data={shareCard} onClose={() => setShareCard(null)} />}
 
       {/* ─── Graduate (lock basket NARA) ──────────────────────────────── */}
-      {graduateModal && (
+      {graduateModal && positionCanExit(graduateModal) && (
         <GraduateModal
           position={graduateModal}
           onConfirm={() => void handleGraduateConfirm()}

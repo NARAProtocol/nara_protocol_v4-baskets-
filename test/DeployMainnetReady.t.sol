@@ -58,6 +58,11 @@ contract DeployMainnetReadyTest is Test {
         deployer.deployBasket(NARA, USDC, adapters, FEE_COLLECTOR);
     }
 
+    function testProductionEntrypointAlwaysFailsClosed() public {
+        vm.expectRevert(DeployMainnetReady.BasketDeploymentReadinessRequired.selector);
+        deployer.run();
+    }
+
     function _codedAdapters() internal returns (address[] memory adapters) {
         adapters = new address[](5);
         for (uint256 i = 0; i < adapters.length; i++) {

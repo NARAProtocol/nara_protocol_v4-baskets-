@@ -1,4 +1,4 @@
-# NARA Baskets documentation
+# NARA Basket Documentation
 
 Start with the [project README](../README.md), then use this index for contract,
 app, deployment, and maintenance detail.
@@ -20,6 +20,7 @@ app, deployment, and maintenance detail.
 | [`SECURITY_CHECKLIST.md`](SECURITY_CHECKLIST.md) | Pre-deployment contract, role, route, app, and evidence gate |
 | [`DEPLOYMENT_MANIFEST.md`](DEPLOYMENT_MANIFEST.md) | Sanitized manifest schema and post-deployment verification |
 | [`VALIDATION_STATUS.md`](VALIDATION_STATUS.md) | Dated test, fork, analyzer, app, and known-gap evidence |
+| [`ROUND_FLOW_RELEASE_GATE.md`](ROUND_FLOW_RELEASE_GATE.md) | Complete quote-to-zero-liability acceptance matrix and current blockers |
 | [`releases/NARA-20260729-baskets-v2-alignment.md`](releases/NARA-20260729-baskets-v2-alignment.md) | Current cross-repository release state and downstream handoff |
 | [`REPOSITORY_MAINTENANCE.md`](REPOSITORY_MAINTENANCE.md) | Mandatory source/config/app/documentation synchronization |
 | [`UI_UX_NEUTRAL_ACTION_HIERARCHY.md`](UI_UX_NEUTRAL_ACTION_HIERARCHY.md) | Neutral action and legal UX guardrails |

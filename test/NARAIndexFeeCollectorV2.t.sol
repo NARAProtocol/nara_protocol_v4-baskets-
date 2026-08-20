@@ -103,6 +103,8 @@ contract MockAggregatorCollectorV2 {
 contract MockRouterCollectorV2 {
     MockWethCollectorV2 public immutable weth;
     uint256 public outputAmount;
+    uint256 public returnedAmount;
+    bool public lieAboutReturn;
     bool public spendLess;
 
     constructor(MockWethCollectorV2 weth_) {
@@ -117,6 +119,11 @@ contract MockRouterCollectorV2 {
         spendLess = spendLess_;
     }
 
+    function setReturnedAmount(uint256 returnedAmount_) external {
+        returnedAmount = returnedAmount_;
+        lieAboutReturn = true;
+    }
+
     function exactInputSingle(ISwapRouter02V2.ExactInputSingleParams calldata params)
         external
         payable
@@ -125,7 +132,7 @@ contract MockRouterCollectorV2 {
         uint256 amountToSpend = spendLess ? params.amountIn - 1 : params.amountIn;
         IERC20(params.tokenIn).transferFrom(msg.sender, address(this), amountToSpend);
         weth.mint(params.recipient, outputAmount);
-        return outputAmount;
+        return lieAboutReturn ? returnedAmount : outputAmount;
     }
 }
 
@@ -135,6 +142,8 @@ contract NARAIndexFeeCollectorV2Test is Test {
     address internal constant ROUTE_MANAGER = address(0xC33);
     address internal constant ATTACKER = address(0xD44);
     address internal constant BASE_SEQUENCER_UPTIME_FEED = 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433;
+    uint48 internal constant USDC_MAX_ORACLE_AGE = 26 hours;
+    uint48 internal constant ETH_MAX_ORACLE_AGE = 1 hours;
 
     MockTokenCollectorV2 internal nara;
     MockTokenCollectorV2 internal usdc;
@@ -190,7 +199,24 @@ contract NARAIndexFeeCollectorV2Test is Test {
             SWAPPER,
             ROUTE_MANAGER,
             _route(router_, usdcFeed_, ethFeed_),
-            1 hours,
+            USDC_MAX_ORACLE_AGE,
+            ETH_MAX_ORACLE_AGE,
+            100
+        );
+    }
+
+    function _deployWithOracleAges(uint48 maxUsdcAge, uint48 maxEthAge) internal returns (NARAIndexFeeCollectorV2) {
+        return new NARAIndexFeeCollectorV2(
+            address(engine),
+            address(nara),
+            address(usdc),
+            address(weth),
+            ADMIN,
+            SWAPPER,
+            ROUTE_MANAGER,
+            _route(address(router), address(usdcFeed), address(ethFeed)),
+            maxUsdcAge,
+            maxEthAge,
             100
         );
     }
@@ -201,6 +227,27 @@ contract NARAIndexFeeCollectorV2Test is Test {
         assertTrue(collector.hasRole(collector.ROUTE_MANAGER_ROLE(), ROUTE_MANAGER));
         assertFalse(collector.hasRole(collector.SWAPPER_ROLE(), ADMIN));
         assertFalse(collector.hasRole(collector.ROUTE_MANAGER_ROLE(), SWAPPER));
+    }
+
+    function testRoleRotationCannotCollapseSeparatedAuthorities() public {
+        bytes32 adminRole = collector.DEFAULT_ADMIN_ROLE();
+        bytes32 swapperRole = collector.SWAPPER_ROLE();
+        bytes32 routeManagerRole = collector.ROUTE_MANAGER_ROLE();
+        vm.startPrank(ADMIN);
+
+        vm.expectRevert(NARAIndexFeeCollectorV2.RolesMustDiffer.selector);
+        collector.grantRole(swapperRole, ADMIN);
+
+        vm.expectRevert(NARAIndexFeeCollectorV2.RolesMustDiffer.selector);
+        collector.grantRole(routeManagerRole, SWAPPER);
+
+        vm.expectRevert(NARAIndexFeeCollectorV2.RolesMustDiffer.selector);
+        collector.grantRole(adminRole, SWAPPER);
+
+        vm.expectRevert(abi.encodeWithSelector(NARAIndexFeeCollectorV2.NotAContract.selector, ATTACKER));
+        collector.grantRole(routeManagerRole, ATTACKER);
+
+        vm.stopPrank();
     }
 
     function testConstructorRejectsCollapsedRoles() public {
@@ -214,7 +261,8 @@ contract NARAIndexFeeCollectorV2Test is Test {
             ADMIN,
             ROUTE_MANAGER,
             _route(address(router), address(usdcFeed), address(ethFeed)),
-            1 hours,
+            USDC_MAX_ORACLE_AGE,
+            ETH_MAX_ORACLE_AGE,
             100
         );
     }
@@ -230,7 +278,8 @@ contract NARAIndexFeeCollectorV2Test is Test {
             SWAPPER,
             ROUTE_MANAGER,
             _route(address(router), address(usdcFeed), address(ethFeed)),
-            1 hours,
+            USDC_MAX_ORACLE_AGE,
+            ETH_MAX_ORACLE_AGE,
             100
         );
     }
@@ -249,9 +298,32 @@ contract NARAIndexFeeCollectorV2Test is Test {
             SWAPPER,
             ROUTE_MANAGER,
             _route(address(router), address(usdcFeed), address(ethFeed)),
-            1 hours,
+            USDC_MAX_ORACLE_AGE,
+            ETH_MAX_ORACLE_AGE,
             100
         );
+    }
+
+    function testPerFeedOracleAgesAreImmutable() public view {
+        assertEq(collector.maxUsdcOracleAge(), USDC_MAX_ORACLE_AGE);
+        assertEq(collector.maxEthOracleAge(), ETH_MAX_ORACLE_AGE);
+    }
+
+    function testConstructorRejectsInvalidPerFeedOracleAges() public {
+        uint48 minimum = collector.MIN_ORACLE_AGE();
+        uint48 maximum = collector.MAX_ORACLE_AGE();
+
+        vm.expectRevert(NARAIndexFeeCollectorV2.InvalidConfig.selector);
+        _deployWithOracleAges(minimum - 1, ETH_MAX_ORACLE_AGE);
+
+        vm.expectRevert(NARAIndexFeeCollectorV2.InvalidConfig.selector);
+        _deployWithOracleAges(maximum + 1, ETH_MAX_ORACLE_AGE);
+
+        vm.expectRevert(NARAIndexFeeCollectorV2.InvalidConfig.selector);
+        _deployWithOracleAges(USDC_MAX_ORACLE_AGE, minimum - 1);
+
+        vm.expectRevert(NARAIndexFeeCollectorV2.InvalidConfig.selector);
+        _deployWithOracleAges(USDC_MAX_ORACLE_AGE, maximum + 1);
     }
 
     function testOracleMinimumUsesBothFeedsAndImmutableSlippage() public view {
@@ -285,6 +357,20 @@ contract NARAIndexFeeCollectorV2Test is Test {
         assertEq(engine.ethReceived(), 0);
     }
 
+    function testConvertUsesExactWethBalanceDeltaInsteadOfRouterReturnValue() public {
+        usdc.mint(address(collector), 1_000e6);
+        router.setOutputAmount(1);
+        router.setReturnedAmount(100 ether);
+
+        vm.prank(SWAPPER);
+        vm.expectRevert(abi.encodeWithSelector(NARAIndexFeeCollectorV2.RouteOutputTooLow.selector, 0.495 ether, 1));
+        collector.convertUsdcAndNotifyEth(1_000e6);
+
+        assertEq(usdc.balanceOf(address(collector)), 1_000e6);
+        assertEq(weth.balanceOf(address(collector)), 0);
+        assertEq(engine.ethReceived(), 0);
+    }
+
     function testConvertRejectsPartialInputConsumption() public {
         usdc.mint(address(collector), 1_000e6);
         router.setOutputAmount(0.5 ether);
@@ -297,21 +383,53 @@ contract NARAIndexFeeCollectorV2Test is Test {
         collector.convertUsdcAndNotifyEth(1_000e6);
     }
 
-    function testStaleOracleStopsBeforeApprovalOrSwap() public {
+    function testStaleEthOracleStopsBeforeApprovalOrSwap() public {
         vm.warp(3 hours);
         usdc.mint(address(collector), 1_000e6);
-        usdcFeed.setRound(1e8, block.timestamp - 2 hours, 2, 2);
+        usdcFeed.setRound(1e8, block.timestamp, 2, 2);
+        ethFeed.setRound(2_000e8, block.timestamp - 2 hours, 2, 2);
 
         vm.prank(SWAPPER);
         vm.expectRevert(
             abi.encodeWithSelector(
-                NARAIndexFeeCollectorV2.OracleStale.selector, address(usdcFeed), block.timestamp - 2 hours
+                NARAIndexFeeCollectorV2.OracleStale.selector, address(ethFeed), block.timestamp - 2 hours
             )
         );
         collector.convertUsdcAndNotifyEth(1_000e6);
 
         assertEq(usdc.allowance(address(collector), address(router)), 0);
         assertEq(usdc.balanceOf(address(collector)), 1_000e6);
+    }
+
+    function testDailyUsdcHeartbeatAgeAcceptedWhileEthIsFresh() public {
+        vm.warp(30 hours);
+        usdcFeed.setRound(1e8, block.timestamp - 25 hours, 2, 2);
+        ethFeed.setRound(2_000e8, block.timestamp, 2, 2);
+
+        assertEq(collector.minimumWethOut(1_000e6), 0.495 ether);
+    }
+
+    function testStaleUsdcOracleRejectedIndependently() public {
+        vm.warp(30 hours);
+        usdcFeed.setRound(1e8, block.timestamp - USDC_MAX_ORACLE_AGE - 1, 2, 2);
+        ethFeed.setRound(2_000e8, block.timestamp, 2, 2);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NARAIndexFeeCollectorV2.OracleStale.selector,
+                address(usdcFeed),
+                block.timestamp - USDC_MAX_ORACLE_AGE - 1
+            )
+        );
+        collector.minimumWethOut(1_000e6);
+    }
+
+    function testEachOracleAgeBoundaryIsAccepted() public {
+        vm.warp(30 hours);
+        usdcFeed.setRound(1e8, block.timestamp - USDC_MAX_ORACLE_AGE, 2, 2);
+        ethFeed.setRound(2_000e8, block.timestamp - ETH_MAX_ORACLE_AGE, 2, 2);
+
+        assertEq(collector.minimumWethOut(1_000e6), 0.495 ether);
     }
 
     function testInvalidOracleRoundStopsConversion() public {
@@ -330,12 +448,28 @@ contract NARAIndexFeeCollectorV2Test is Test {
         collector.minimumWethOut(1_000e6);
     }
 
-    function testHonestEthPricesOutsideLegacyBandRemainConvertible() public {
-        ethFeed.setAnswer(50e8);
-        assertEq(collector.minimumWethOut(1_000e6), 19.8 ether);
+    function testEthPriceBoundsAcceptExactBoundaries() public {
+        ethFeed.setAnswer(100e8);
+        assertEq(collector.minimumWethOut(1_000e6), 9.9 ether);
 
-        ethFeed.setAnswer(200_000e8);
-        assertEq(collector.minimumWethOut(1_000e6), 0.00495 ether);
+        ethFeed.setAnswer(100_000e8);
+        assertEq(collector.minimumWethOut(1_000e6), 0.0099 ether);
+    }
+
+    function testEthPriceBoundsRejectOutOfRangeFeedAnswers() public {
+        ethFeed.setAnswer(99e8);
+        vm.expectRevert(
+            abi.encodeWithSelector(NARAIndexFeeCollectorV2.OraclePriceOutOfBounds.selector, address(ethFeed), 99 ether)
+        );
+        collector.minimumWethOut(1_000e6);
+
+        ethFeed.setAnswer(100_001e8);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NARAIndexFeeCollectorV2.OraclePriceOutOfBounds.selector, address(ethFeed), 100_001 ether
+            )
+        );
+        collector.minimumWethOut(1_000e6);
     }
 
     function testSequencerOutageAndRecoveryGracePeriodStopConversion() public {
@@ -436,6 +570,8 @@ contract NARAIndexFeeCollectorV2Test is Test {
 
         (address activeRouter,,,) = collector.routeConfig();
         assertEq(activeRouter, address(nextRouter));
+        assertEq(collector.maxUsdcOracleAge(), USDC_MAX_ORACLE_AGE);
+        assertEq(collector.maxEthOracleAge(), ETH_MAX_ORACLE_AGE);
     }
 
     function testRouteManagerCanCancelPendingMigration() public {

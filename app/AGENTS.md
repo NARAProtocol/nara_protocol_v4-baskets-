@@ -1,4 +1,4 @@
-# NARA Baskets Agent Rules
+# NARA Basket App Agent Rules
 
 This folder is the active basket dApp. Before changing **any** UI, copy, wallet
 flows, or design work, read **both** of the following in this order:
@@ -16,7 +16,9 @@ flows, or design work, read **both** of the following in this order:
 - NARA color in allocation rail: always `#0000FF` — never changes per basket
 - Basket display names: **CORE** / **AI** / **FINANCE** / **CULTURE**
   (keys remain `base` / `ai` / `defi` / `meme` in code)
-- Token list on cards: text rail `NARA · WETH · cbBTC` — not colored dots
+- Public brand: **NARA**. Public ticker: **$NARA**. Raw contract symbol and
+  technical identifiers remain `NARA`.
+- Token list on cards: text rail `$NARA · WETH · cbBTC` — not colored dots
 - All-caps monospace = wrong. Display font for headings, sans for UI text.
 
 ## Legal UI/UX Rule
@@ -30,12 +32,12 @@ flows, or design work, read **both** of the following in this order:
   buying`, `Confirm Buy`, `Confirm Exit`.
 - Before confirmation, show selected basket or exit, tokens, weights, fees,
   slippage/deadline, approvals, expected output, exit paths, and risk notice.
-- Users must be able to review exit routes to USDC or NARA when those routes are
-  supported by the deployed manager.
+- Users must be able to review the USDC exit or direct underlying-token
+  withdrawal routes supported by the deployed manager.
 
 ## Current Launch Scope
 
-- NARA Baskets is the only frontend in the current launch scope.
+- The NARA basket app is the only frontend in the current launch scope.
 - Basket managers, fee collector, and five-adapter production set are not live
   until Base deployment manifests exist and pass `check:manifest-env`.
 - Missing or invalid `VITE_BASKET_STATUS_*` values must remain preview/disabled;
@@ -48,7 +50,7 @@ flows, or design work, read **both** of the following in this order:
   before quote submission and before sending the transaction.
 - Keep the compatible wallet baseline at RainbowKit 2.2.11 / Wagmi 2.19.5
   unless a full migration is explicitly reviewed. Current patched support
-  versions are Viem 2.55.10, Vite 8.1.5, and Wrangler 4.115.0. Do not run
+  versions are Viem 2.55.10, Vite 8.1.5, and Wrangler 4.120.0. Do not run
   `npm audit fix --force` as a routine fix.
 - The optional Graduation flow does not gate the basket launch. Keep it hidden
   unless canonical position NFT and router contracts are separately deployed

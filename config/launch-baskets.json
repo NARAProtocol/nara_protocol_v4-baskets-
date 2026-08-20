@@ -1,7 +1,16 @@
 {
   "$schema": "Launch basket curation file. Operator fills live NARA values before deploy. Frontend parity checks compare this file against the app basket config.",
-  "lastUpdated": "2026-07-28",
+  "lastUpdated": "2026-08-09",
   "chainId": 8453,
+  "protocolOrigin": {
+    "repository": "NARAProtocol/nara_protocol_v4",
+    "releaseCommit": "ce71f4dfc9182ab12e12f9c25e91ec40fdb9cb60",
+    "activationEvidenceCommit": "ba5aaea730b92d8ce12a94926ec076f3fde85982",
+    "contractSourceCommit": "027af3f06bbe6dea2c187dfd8062e50c228f1c35",
+    "activationManifest": "deployments/v4-production-activation-2026-08-09.json",
+    "compounderManifest": "deployments/v4-compounder-activation-2026-08-09.json",
+    "verificationBlock": 49736809
+  },
   "baseAddresses": {
     "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     "WETH": "0x4200000000000000000000000000000000000006",
@@ -18,18 +27,22 @@
     "UNISWAP_V3_SWAPROUTER02": "0x2626664c2603336E57B271c5C0b26F421741e481",
     "UNISWAP_V4_UNIVERSAL_ROUTER": "0x6ff5693b99212da76ad316178a184ab56d299b43",
     "PERMIT2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
-    "NARA": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A",
-    "NARA_ENGINE": "0xbC2492BA73dE35d1114b5c18d7db633aca8963c9",
-    "NARA_V4_HOOK": null,
+    "NARA": "0xB6333F5D4cEd8dffA80F3F13697D6aA3BB3f19c1",
+    "NARA_ENGINE": "0x98ab6406D6B548F37dEF7110961bb45A399e5aFC",
+    "NARA_V4_HOOK": "0x59AEf9799DEA01A7FB7dA73BEA10dfB08858A088",
+    "NARA_V4_POOL_ID": "0x83edced1f39e6adf7469cd718eeb409824d948959263408d4cfb6e745c8db464",
     "NARA_V4_POOL_FEE": 3000,
     "NARA_V4_TICK_SPACING": 60
   },
   "feeCollectorRoute": {
     "router": "0x2626664c2603336E57B271c5C0b26F421741e481",
-    "usdcUsdFeed": null,
-    "ethUsdFeed": null,
+    "usdcUsdFeed": "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B",
+    "ethUsdFeed": "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
     "poolFee": 500,
-    "maxOracleAgeSeconds": 3600,
+    "maxUsdcOracleAgeSeconds": 93600,
+    "maxUsdcOracleAgeSecondsNote": "26h. Base USDC/USD (0x7e86...2bc6B) has an observed daily heartbeat (max consecutive gap 86428s measured 2026-08-01). This gives roughly two hours of heartbeat-delivery margin while preserving the 0.9-1.1 depeg bound.",
+    "maxEthOracleAgeSeconds": 3600,
+    "maxEthOracleAgeSecondsNote": "1h. Base ETH/USD (0x7104...Bb70) had a 1290s maximum consecutive gap across 120 rounds measured 2026-08-01. The independent limit bounds stale downside-slippage exposure without inheriting the USDC feed's daily heartbeat.",
     "maxSlippageBps": 100,
     "admin": null,
     "swapper": null,
@@ -55,7 +68,7 @@
       "maxWeightDeviationBps": 25,
       "minNaraWeightBps": 500,
       "assets": [
-        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1000, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": null, "pairToken": "USDC" } },
+        { "symbol": "NARA", "address": "0xB6333F5D4cEd8dffA80F3F13697D6aA3BB3f19c1", "weightBps": 1000, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": "0x59AEf9799DEA01A7FB7dA73BEA10dfB08858A088", "pairToken": "USDC" } },
         { "symbol": "cbBTC", "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", "weightBps": 3000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } },
         { "symbol": "WETH", "address": "0x4200000000000000000000000000000000000006", "weightBps": 3000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } },
         { "symbol": "AERO", "address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631", "weightBps": 2000, "aerodromePool": { "stable": false, "pairToken": "USDC" } },
@@ -68,8 +81,8 @@
         "everyAssetNotBlacklistable": true,
         "everyAssetNotPausable": true,
         "everyAssetSourceVerifiedOnBasescan": true,
-        "v4CoreDeployedAndStable48h": "pending evidence",
-        "naraPoolInitializedLiquidAndSmokeTested": "pending evidence",
+        "v4CoreDeployedAndStable48h": "deployed and verified; observation-period gate remains open",
+        "naraPoolInitializedLiquidAndSmokeTested": "receipt-pinned protocol flow passed; basket round-flow remains pending",
         "feeCollectorAdminIsSafeWithTimelock": "pending verification"
       },
       "deployed": null
@@ -86,7 +99,7 @@
       "maxWeightDeviationBps": 50,
       "minNaraWeightBps": 1000,
       "assets": [
-        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": null, "pairToken": "USDC" } },
+        { "symbol": "NARA", "address": "0xB6333F5D4cEd8dffA80F3F13697D6aA3BB3f19c1", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": "0x59AEf9799DEA01A7FB7dA73BEA10dfB08858A088", "pairToken": "USDC" } },
         { "symbol": "VIRTUAL", "address": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b", "weightBps": 3500, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } },
         { "symbol": "VVV", "address": "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf", "weightBps": 3000, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
         { "symbol": "AIXBT", "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825", "weightBps": 2000, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } }
@@ -112,7 +125,7 @@
       "maxWeightDeviationBps": 75,
       "minNaraWeightBps": 1000,
       "assets": [
-        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": null, "pairToken": "USDC" } },
+        { "symbol": "NARA", "address": "0xB6333F5D4cEd8dffA80F3F13697D6aA3BB3f19c1", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": "0x59AEf9799DEA01A7FB7dA73BEA10dfB08858A088", "pairToken": "USDC" } },
         { "symbol": "BRETT", "address": "0x532f27101965dd16442E59d40670FaF5eBB142E4", "weightBps": 3500, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
         { "symbol": "DEGEN", "address": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed", "weightBps": 2500, "aerodromePool": { "stable": false, "pairToken": "WETH" } },
         { "symbol": "TOSHI", "address": "0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4", "weightBps": 2500, "aerodromePool": { "stable": false, "pairToken": "USDC" } }
@@ -138,7 +151,7 @@
       "maxWeightDeviationBps": 50,
       "minNaraWeightBps": 1000,
       "assets": [
-        { "symbol": "NARA", "address": "0x65E247AA3aa9C0131b2984b894c3D24c41341D7A", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": null, "pairToken": "USDC" } },
+        { "symbol": "NARA", "address": "0xB6333F5D4cEd8dffA80F3F13697D6aA3BB3f19c1", "weightBps": 1500, "v4Pool": { "fee": 3000, "tickSpacing": 60, "hook": "0x59AEf9799DEA01A7FB7dA73BEA10dfB08858A088", "pairToken": "USDC" } },
         { "symbol": "AERO", "address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631", "weightBps": 3500, "aerodromePool": { "stable": false, "pairToken": "USDC" } },
         { "symbol": "MORPHO", "address": "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842", "weightBps": 3000, "v3Pool": { "feeTier": 3000, "pairToken": "USDC" } },
         { "symbol": "WETH", "address": "0x4200000000000000000000000000000000000006", "weightBps": 2000, "v3Pool": { "feeTier": 500, "pairToken": "USDC" } }
@@ -154,10 +167,10 @@
     }
   ],
   "launchOrder": [
-    "Deploy and verify the corrected replacement hook, vault, and compounder; never initialize the quarantined Stage A pool",
-    "Bind the exact opening sqrtPriceX96 and prove the registered pool uses fee 3000 and tick spacing 60",
-    "Seed the replacement NARA pool, smoke test it, and complete the documented observation period",
-    "Run the complete DeployMainnetReady transaction sequence on an exact Base-mainnet fork",
+    "Verify protocol origin ce71f4dfc9182ab12e12f9c25e91ec40fdb9cb60 and activation evidence ba5aaea730b92d8ce12a94926ec076f3fde85982 before every basket release",
+    "Recompute the canonical PoolId from NARA, USDC, fee 3000, tick spacing 60, and the verified Hook; require exact agreement with the registered pool",
+    "Keep managers, adapters, collector, roles, and basket statuses unset until the observation period and exact basket round-flow gates pass",
+    "Run the complete basket deployment candidate on an exact Base-mainnet fork before any broadcast approval",
     "Verify the typed collector router, oracle feeds, pool fee, age bound, slippage bound, and distinct role holders",
     "Review the single broadcast sequence: five adapters, oracle-bounded V2 collector, CORE manager, and role assignments",
     "Broadcast only with distinct contract ADMIN and ROUTE_MANAGER addresses plus a separate SWAPPER",

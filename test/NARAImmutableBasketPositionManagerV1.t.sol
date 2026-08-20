@@ -1079,6 +1079,72 @@ contract NARAImmutableBasketPositionManagerV1Test is Test {
         assertEq(deficit, 0);
     }
 
+    function testCompleteRoundFlowBuyPartialExitUnderlyingExitClaimsAndSweepsToZero() public {
+        address referrer = address(0xBEEF);
+        NARAImmutableBasketPositionManagerV1.BuyParams memory buyParams = _buyParams(1_000 ether, 0);
+        buyParams.referrer = referrer;
+
+        vm.startPrank(alice);
+        usdc.approve(address(manager), buyParams.inputAmount);
+        (uint256 tokenId,) = manager.buyBasket(buyParams);
+        vm.stopPrank();
+
+        // Exercise the direct-output branch: sell part of the NARA holding to
+        // NARA, leaving a live receipt with every remaining asset recoverable.
+        NARAImmutableBasketPositionManagerV1.PartialSellParams memory partialParams;
+        partialParams.tokenId = tokenId;
+        partialParams.outputToken = address(nara);
+        partialParams.directOutputAmount = 50 ether;
+        partialParams.minOutputAmount = 49.5 ether;
+        partialParams.swaps = new NARAImmutableBasketPositionManagerV1.SwapInstruction[](0);
+        partialParams.receiver = alice;
+        partialParams.deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        (uint256 partialGross, uint256 partialNet, bool partialClosed) = manager.sellBasketPartial(partialParams);
+        assertEq(partialGross, 50 ether);
+        assertEq(partialNet, 49.5 ether);
+        assertFalse(partialClosed);
+        assertEq(manager.positionAmountOf(tokenId, address(nara)), 49 ether);
+
+        // The universal no-stuck exit does not depend on any swap venue. It
+        // returns every remaining underlying asset and burns the receipt.
+        vm.prank(alice);
+        manager.withdrawUnderlying(tokenId, alice);
+        vm.expectRevert();
+        manager.ownerOf(tokenId);
+
+        assertEq(manager.totalAccountedAsset(address(nara)), 0);
+        assertEq(manager.totalAccountedAsset(address(pepe)), 0);
+        assertEq(manager.totalAccountedAsset(address(doge)), 0);
+        assertEq(manager.totalAccountedAsset(address(bonk)), 0);
+
+        // Referral liabilities are pull-based and independently claimable in
+        // every fee asset before protocol fees are swept.
+        assertEq(manager.referralRewards(referrer, address(usdc)), 3 ether);
+        assertEq(manager.referralRewards(referrer, address(nara)), 0.15 ether);
+        vm.startPrank(referrer);
+        manager.claimReferralReward(address(usdc), referrer);
+        manager.claimReferralReward(address(nara), referrer);
+        vm.stopPrank();
+
+        // Permissionless sweeps finish the protocol side of every liability.
+        manager.sweepAccruedFee(address(usdc));
+        manager.sweepAccruedFee(address(nara));
+        manager.sweepAccruedFee(address(pepe));
+        manager.sweepAccruedFee(address(doge));
+        manager.sweepAccruedFee(address(bonk));
+
+        address[5] memory tokens = [address(usdc), address(nara), address(pepe), address(doge), address(bonk)];
+        for (uint256 i; i < tokens.length; ++i) {
+            (uint256 balance, uint256 accounted, bool solvent, uint256 deficit) = manager.assetSolvency(tokens[i]);
+            assertEq(balance, 0, "manager residue");
+            assertEq(accounted, 0, "unsettled liability");
+            assertTrue(solvent, "insolvent after complete exit");
+            assertEq(deficit, 0, "deficit after complete exit");
+        }
+    }
+
     function _buyForAlice() internal returns (uint256 tokenId) {
         NARAImmutableBasketPositionManagerV1.BuyParams memory params = _buyParams(1_000 ether, 0);
         vm.startPrank(alice);

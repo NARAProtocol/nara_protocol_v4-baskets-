@@ -120,7 +120,7 @@ contract UniswapV4BasketAdapterV1Test is Test {
     UniswapV4BasketAdapterV1 adapter;
 
     address manager = address(0xA11CE);
-    address hook = address(0x4004);
+    address hook = address(0x2088);
     uint24 constant FEE = 3000;
     int24 constant TICK_SPACING = 60;
 
@@ -130,7 +130,10 @@ contract UniswapV4BasketAdapterV1Test is Test {
         nara = new V4MockERC20("NARA", "NARA", 18);
         permit2 = new MockPermit2();
         router = new MockUniversalRouter(permit2);
-        adapter = new UniswapV4BasketAdapterV1(address(router), address(permit2), FEE, TICK_SPACING, hook);
+        _mockHookBinding(hook, address(nara), address(usdc), FEE, TICK_SPACING, true);
+        adapter = new UniswapV4BasketAdapterV1(
+            address(router), address(permit2), address(nara), address(usdc), FEE, TICK_SPACING, hook
+        );
 
         router.setRate(2e18); // 2 NARA out per 1 USDC-unit in (mock units)
         nara.mint(address(router), 1_000_000 ether);
@@ -141,6 +144,90 @@ contract UniswapV4BasketAdapterV1Test is Test {
 
     function _data() internal view returns (bytes memory) {
         return bytes("");
+    }
+
+    function _poolId(address token, address base, uint24 fee, int24 tickSpacing, address hooks)
+        internal
+        pure
+        returns (bytes32)
+    {
+        (address currency0, address currency1) = token < base ? (token, base) : (base, token);
+        return keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks));
+    }
+
+    function _mockHookBinding(
+        address hookAddress,
+        address token,
+        address base,
+        uint24 fee,
+        int24 tickSpacing,
+        bool registered
+    ) internal returns (bytes32 registeredPoolId) {
+        vm.etch(hookAddress, hex"00");
+        registeredPoolId = _poolId(token, base, fee, tickSpacing, hookAddress);
+        vm.mockCall(hookAddress, abi.encodeWithSignature("token()"), abi.encode(token));
+        vm.mockCall(hookAddress, abi.encodeWithSignature("base()"), abi.encode(base));
+        vm.mockCall(hookAddress, abi.encodeWithSignature("poolRegistered()"), abi.encode(registered));
+        vm.mockCall(hookAddress, abi.encodeWithSignature("registeredPoolId()"), abi.encode(registeredPoolId));
+    }
+
+    function testConstructorBindsExactCanonicalPoolIdentity() public view {
+        assertEq(adapter.canonicalToken(), address(nara), "canonical token");
+        assertEq(adapter.canonicalBase(), address(usdc), "canonical base");
+        assertEq(adapter.canonicalPoolId(), _poolId(address(nara), address(usdc), FEE, TICK_SPACING, hook));
+        assertEq(adapter.REQUIRED_HOOK_PERMISSION_FLAGS(), 0x2088, "hook permissions");
+    }
+
+    function testConstructorRejectsWrongHookPermissionBits() public {
+        address wrongHook = address(0x2080);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV4BasketAdapterV1.InvalidHookPermissions.selector, wrongHook, uint160(0x2088), uint160(0x2080)
+            )
+        );
+        new UniswapV4BasketAdapterV1(
+            address(router), address(permit2), address(nara), address(usdc), FEE, TICK_SPACING, wrongHook
+        );
+    }
+
+    function testConstructorRejectsHookTokenOrBaseMismatch() public {
+        address other = address(0xBADD);
+        _mockHookBinding(hook, other, address(usdc), FEE, TICK_SPACING, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(UniswapV4BasketAdapterV1.HookTokenMismatch.selector, address(nara), other)
+        );
+        new UniswapV4BasketAdapterV1(
+            address(router), address(permit2), address(nara), address(usdc), FEE, TICK_SPACING, hook
+        );
+
+        _mockHookBinding(hook, address(nara), other, FEE, TICK_SPACING, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(UniswapV4BasketAdapterV1.HookBaseMismatch.selector, address(usdc), other)
+        );
+        new UniswapV4BasketAdapterV1(
+            address(router), address(permit2), address(nara), address(usdc), FEE, TICK_SPACING, hook
+        );
+    }
+
+    function testConstructorRejectsUnregisteredOrMismatchedPoolId() public {
+        _mockHookBinding(hook, address(nara), address(usdc), FEE, TICK_SPACING, false);
+        vm.expectRevert(UniswapV4BasketAdapterV1.HookPoolNotRegistered.selector);
+        new UniswapV4BasketAdapterV1(
+            address(router), address(permit2), address(nara), address(usdc), FEE, TICK_SPACING, hook
+        );
+
+        _mockHookBinding(hook, address(nara), address(usdc), FEE, TICK_SPACING, true);
+        bytes32 wrongPoolId = keccak256("wrong pool");
+        vm.mockCall(hook, abi.encodeWithSignature("registeredPoolId()"), abi.encode(wrongPoolId));
+        bytes32 expectedPoolId = _poolId(address(nara), address(usdc), FEE, TICK_SPACING, hook);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UniswapV4BasketAdapterV1.RegisteredPoolIdMismatch.selector, expectedPoolId, wrongPoolId
+            )
+        );
+        new UniswapV4BasketAdapterV1(
+            address(router), address(permit2), address(nara), address(usdc), FEE, TICK_SPACING, hook
+        );
     }
 
     function testSwapPullsInputForwardsOutputAndReportsExactDeltas() public {
@@ -257,6 +344,13 @@ contract UniswapV4BasketAdapterV1Test is Test {
         vm.stopPrank();
     }
 
+    function testRevertsOnTokenPairOutsideCanonicalPool() public {
+        V4MockERC20 other = new V4MockERC20("Other", "OTHER", 18);
+        vm.prank(manager);
+        vm.expectRevert(UniswapV4BasketAdapterV1.InvalidTokens.selector);
+        adapter.swapExactInput(address(usdc), address(other), 100 ether, 1, _data());
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Fork test — proves the encoding against the REAL Universal Router + a live v4
     // pool. Skipped unless V4_FORK_RPC + the pool env vars are set, so it runs
@@ -284,7 +378,7 @@ contract UniswapV4BasketAdapterV1Test is Test {
         address hk = vm.envAddress("V4_HOOK");
         address whale = vm.envAddress("V4_WHALE");
 
-        UniswapV4BasketAdapterV1 fa = new UniswapV4BasketAdapterV1(ur, p2, fee, tickSpacing, hk);
+        UniswapV4BasketAdapterV1 fa = new UniswapV4BasketAdapterV1(ur, p2, tokenOut, tokenIn, fee, tickSpacing, hk);
 
         // Fund this contract (acting as the manager) with tokenIn from a whale.
         vm.prank(whale);

@@ -109,6 +109,11 @@ for (const key of statusKeys) {
   if (!["live", "exit_only"].includes(status)) {
     failures.push(`${key} must be live or exit_only`);
   }
+  if (status === "live") {
+    failures.push(
+      `${key}=live remains blocked until the basket-specific deployment manifest is approved, the exact Base-fork round flow passes, collector roles are verified, and environment/manifest parity passes`,
+    );
+  }
 }
 
 managerKeys.forEach(requireAddress);

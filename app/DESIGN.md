@@ -1,4 +1,4 @@
-# NARA Baskets — App-Level Design Rules
+# NARA — Basket App Design Rules
 
 This file is the source of truth for the repository's `app/` directory.
 It overrides broader workspace visual defaults for this app only.
@@ -7,7 +7,11 @@ It overrides broader workspace visual defaults for this app only.
 
 ## Product Identity
 
-**NARA Baskets = neutral Base basket infrastructure.**
+**NARA = neutral Base basket infrastructure.**
+
+The root public brand is **NARA** and the public ticker is **$NARA**. The raw
+ERC-20 symbol, contract identifiers, environment variables, and code keys stay
+`NARA`; the dollar prefix is presentation copy only.
 
 Not a fund. Not a recommender. Not a casino. Not a trading bot.
 
@@ -60,13 +64,13 @@ Root font: `var(--font-ui)`.
 --line:         rgba(228, 221, 210, 0.7);
 --line-strong:  #E4DDD2;   /* warm grey border */
 --text:         #111111;   /* near black */
---muted:        #9A8774;   /* taupe secondary text */
+--muted:        #806D5A;   /* accessible taupe secondary text */
 --accent:       #0000FF;   /* Base Blue — PRIMARY ACTION ONLY */
 --accent-soft:  rgba(0, 0, 255, 0.06);
 --accent-shadow:0 10px 22px rgba(0, 0, 255, 0.18);
 --panel-shadow: 0 12px 30px rgba(60, 44, 20, 0.07);
 --success:      #226f51;
---warning:      #a06614;   /* muted amber — not neon red */
+--warning:      #8B5210;   /* accessible muted amber — not neon red */
 --danger:       #9b3a34;
 ```
 
@@ -108,9 +112,9 @@ This is the visual brand signature — repeat it everywhere, keep it consistent.
 
 **Token rail format:**
 ```
-NARA · WETH · cbBTC · AERO · BRETT
+$NARA · WETH · cbBTC · AERO · BRETT
 ```
-NARA in blue (`nb-token-rail-nara`), others in near-black (`nb-token-rail-sym`), separator `·` at 40% opacity.
+$NARA in blue (`nb-token-rail-nara`), others in near-black (`nb-token-rail-sym`), separator `·` at 40% opacity.
 
 CSS classes: `.nb-token-rail`, `.nb-token-rail-nara`, `.nb-token-rail-sym`, `.nb-token-rail-sep`
 
@@ -133,8 +137,8 @@ swap card so the flow is instantly familiar; the "You receive" token is a *baske
 │ ┌─────────────────────────────────────┐ │
 │ │ You receive                          │ │
 │ │ ≈ $990             [ CORE ▾ ]        │ │  ← nb-swap-est + nb-token-pill → basket modal
-│ │ ████░░░░  NARA · cbBTC · WETH …       │ │  ← allocation rail + token rail
-│ │ NARA 10% · cbBTC 30% …  per-asset $   │ │  ← AllocationBreakdown
+│ │ ████░░░░  $NARA · cbBTC · WETH …      │ │  ← allocation rail + token rail
+│ │ $NARA 10% · cbBTC 30% …  per-asset $  │ │  ← AllocationBreakdown
 │ └─────────────────────────────────────┘ │
 │  Per-asset route · Buy fee · Slippage    │
 │ [            Confirm Buy             ]   │  ← self-advancing CTA
@@ -173,8 +177,8 @@ Button text: sentence case, not ALL CAPS. Font: Inter.
 ## Canonical Copy
 
 ### Header
-- Title: **NARA Baskets** (Satoshi, not all-caps mono)
-- Subline: **Predefined Base baskets. One transaction. On chain execution.**
+- Title: **NARA** (Satoshi, not all-caps mono)
+- Subline: **$NARA category baskets on Base. One transaction. On-chain execution.**
 
 ### Status messages
 - Pre-launch: **Preview mode. Buying opens after contract deployment.**
@@ -195,7 +199,7 @@ Button text: sentence case, not ALL CAPS. Font: Inter.
 
 ### Legal / disclaimer copy
 - "Non-custodial. On chain. You hold the receipt NFT; the basket contract holds the underlying tokens."
-- "Exit anytime: receive USDC, convert to NARA, or withdraw the constituent tokens directly from the contract."
+- "Exit to USDC or withdraw the constituent tokens directly from the contract."
 
 ### Banned copy
 - "Recommended", "Best", "Safest", "Top", "Popular", "Trending"
@@ -247,19 +251,24 @@ Button text: sentence case, not ALL CAPS. Font: Inter.
 
 > ⚠️ **NARA's own pool is special — taxed Uniswap v4, not a plain pool.**
 > NARA's designed liquidity home is a taxed **Uniswap v4** pool (`NARALiquidityGrowthHook` +
-> `NARALiquidityGrowthVault` in `nara-protocol-hardhat/contracts/v4/`). The hook taxes every NARA
-> swap (default 5% buy / 5% sell) and by default compounds the tax back into the LP — it was
-> designed to **build liquidity** from trading volume.
+> `NARALiquidityGrowthVault` in `nara-protocol-hardhat/contracts/v4/`). Only the registered
+> canonical Hook PoolKey is taxed; ordinary NARA transfers and other pools are not. The default
+> curves start at 5% buy / 5% sell; same-block pressure can reach 20% buy / 15% sell. Both curves
+> have a configurable operational cap of 20%. The contract ceiling is 50%, with post-registration
+> curve updates delayed seven days. Fees are
+> banked in their input currency; one-sided flow remains banked until matching inventory exists
+> and a keeper compounds it (optionally earning the configured bounty).
 > Baskets now include `UniswapV4BasketAdapterV1` for the required NARA slice. The frontend must
 > receive the deployed v4 adapter plus NARA hook pool env values, or buys stay disabled. **Full
 > launch rules: [`../docs/NARA_INTEGRATION.md`](../docs/NARA_INTEGRATION.md).**
 
 The production design requires **five** immutable swap adapters to be deployed
 and allowlisted in every basket's `adapters[]` (see
-`DeployMainnetReady.s.sol` / `DeployForkLocal.s.sol`). The fresh Stage A core
-deployment did not deploy basket managers or adapters. Do not call them live
-until the basket Base manifests exist and pass `check:manifest-env`. Adapters
-cannot be added after a basket is deployed.
+`DeployMainnetReady.s.sol` / `DeployForkLocal.s.sol`). The fixed v4 production
+release does not constitute a basket deployment: no basket managers or adapters
+are published as live. Do not call them live until the basket Base manifests
+exist and pass `check:manifest-env`. Adapters cannot be added after a basket is
+deployed.
 
 | Adapter | Base venue (24h vol) | Router (Base, verified) | Interface |
 |---------|---------|---------|---------|
@@ -281,6 +290,12 @@ on Aerodrome AMM). Slipstream `data` = `(int24 tickSpacing, uint160 sqrtPriceLim
 = `(uint24 fee, uint160 sqrtPriceLimit)`; Uniswap V3 `data` = `(uint24 fee, uint160 sqrtPriceLimit)`;
 Uniswap V4 `data` must be empty bytes (`0x`) because its fee, tick spacing, and hook are constructor
 immutables.
+
+For every canonical v4 NARA leg, the review must show `Estimated $NARA Hook fee`
+with its input-token amount and effective rate. Read `quotePoolFeeDetailed` at the
+same block as the route quote, refresh it immediately before submission, and require
+another confirmation if the disclosed amount or rate changes. Explain neutrally
+that same-block pressure can change the estimate before inclusion.
 
 The frontend routing engine selects supported venues from GeckoTerminal pool
 depth for non-v4 assets after the basket deployment is live. NARA bypasses

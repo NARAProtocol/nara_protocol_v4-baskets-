@@ -62,6 +62,18 @@ function isBytes32(value) {
   return /^0x[a-fA-F0-9]{64}$/.test(String(value ?? "").trim());
 }
 
+function requireBytes32(label, value) {
+  if (!isBytes32(value) || norm(value) === `0x${"0".repeat(64)}`) {
+    fail(`${label}: must be a non-zero bytes32`);
+  }
+}
+
+function requireCommit(label, value) {
+  if (!/^[a-fA-F0-9]{40}$/.test(String(value ?? "").trim())) {
+    fail(`${label}: must be a full 40-character Git commit`);
+  }
+}
+
 function eqAddress(label, expected, actual) {
   if (!isAddress(expected)) {
     fail(`${label}: expected value is not a concrete non-zero address`);
@@ -124,6 +136,26 @@ const adapterEnv = {
   uniswapV4: "VITE_BASKET_ADAPTER_V4",
 };
 
+const launchAddresses = launchConfig.baseAddresses ?? {};
+const collectorRoute = launchConfig.feeCollectorRoute ?? {};
+const launchFeePolicy = launchConfig.launchFeePolicy ?? {};
+const protocolOrigin = launchConfig.protocolOrigin ?? {};
+
+requireCommit("launch protocolOrigin.releaseCommit", protocolOrigin.releaseCommit);
+requireCommit("launch protocolOrigin.activationEvidenceCommit", protocolOrigin.activationEvidenceCommit);
+requireCommit("launch protocolOrigin.contractSourceCommit", protocolOrigin.contractSourceCommit);
+requirePositiveNumber("launch protocolOrigin.verificationBlock", protocolOrigin.verificationBlock);
+requireBytes32("launch NARA v4 PoolId", launchAddresses.NARA_V4_POOL_ID);
+
+eqAddress("launch NARA vs VITE_NARA_TOKEN", env.VITE_NARA_TOKEN, launchAddresses.NARA);
+eqAddress("launch Hook vs VITE_NARA_V4_HOOK", env.VITE_NARA_V4_HOOK, launchAddresses.NARA_V4_HOOK);
+eqNumber("launch v4 pool fee vs VITE_NARA_V4_POOL_FEE", env.VITE_NARA_V4_POOL_FEE, launchAddresses.NARA_V4_POOL_FEE);
+eqNumber(
+  "launch v4 tick spacing vs VITE_NARA_V4_TICK_SPACING",
+  env.VITE_NARA_V4_TICK_SPACING,
+  launchAddresses.NARA_V4_TICK_SPACING,
+);
+
 if (!existsSync(manifestDir)) {
   fail(`Manifest directory is missing: ${manifestDir}`);
 }
@@ -150,12 +182,56 @@ for (const [key, suffix] of Object.entries(basketEnvSuffix)) {
   eqNumber(`${label}.chainId launch parity`, launchConfig.chainId ?? baseChainId, manifest.chainId);
   eqAddress(`${label}.manager vs VITE_BASKET_MANAGER_${suffix}`, env[`VITE_BASKET_MANAGER_${suffix}`], manifest.manager);
   eqAddress(`${label}.nara vs VITE_NARA_TOKEN`, env.VITE_NARA_TOKEN, manifest.nara);
+  eqAddress(`${label}.engine`, launchAddresses.NARA_ENGINE, manifest.engine);
+  eqAddress(`${label}.naraV4Hook vs VITE_NARA_V4_HOOK`, env.VITE_NARA_V4_HOOK, manifest.naraV4Hook);
+  eqNumber(`${label}.naraV4PoolFee`, launchAddresses.NARA_V4_POOL_FEE, manifest.naraV4PoolFee);
+  eqNumber(`${label}.naraV4TickSpacing`, launchAddresses.NARA_V4_TICK_SPACING, manifest.naraV4TickSpacing);
+  requireBytes32(`${label}.naraV4PoolId`, manifest.naraV4PoolId);
+  if (norm(manifest.naraV4PoolId) !== norm(launchAddresses.NARA_V4_POOL_ID)) {
+    fail(`${label}.naraV4PoolId differs from the immutable protocol launch configuration`);
+  }
+  eqAddress(`${label}.v4Router`, launchAddresses.UNISWAP_V4_UNIVERSAL_ROUTER, manifest.v4Router);
+  eqAddress(`${label}.permit2`, launchAddresses.PERMIT2, manifest.permit2);
   eqAddress(`${label}.feeCollector vs VITE_NARA_FEE_COLLECTOR`, env.VITE_NARA_FEE_COLLECTOR, manifest.feeCollector);
   eqAddress(`${label}.usdc`, usdc, manifest.usdc);
   eqAddress(`${label}.weth`, weth, manifest.weth);
 
   for (const [adapterKey, envKey] of Object.entries(adapterEnv)) {
     eqAddress(`${label}.adapters.${adapterKey} vs ${envKey}`, env[envKey], manifest.adapters?.[adapterKey]);
+    requireBytes32(`${label}.adapterCodeHashes.${adapterKey}`, manifest.adapterCodeHashes?.[adapterKey]);
+  }
+  eqAddress(
+    `${label}.requiredAssetAdapter`,
+    manifest.adapters?.uniswapV4,
+    manifest.requiredAssetAdapter,
+  );
+
+  requireCommit(`${label}.originCommit`, manifest.originCommit);
+  requireCommit(`${label}.protocolOriginCommit`, manifest.protocolOriginCommit);
+  requireCommit(`${label}.protocolActivationEvidenceCommit`, manifest.protocolActivationEvidenceCommit);
+  requireCommit(`${label}.protocolContractSourceCommit`, manifest.protocolContractSourceCommit);
+  if (norm(manifest.protocolOriginCommit) !== norm(protocolOrigin.releaseCommit)) {
+    fail(`${label}.protocolOriginCommit differs from launch protocolOrigin.releaseCommit`);
+  }
+  if (norm(manifest.protocolActivationEvidenceCommit) !== norm(protocolOrigin.activationEvidenceCommit)) {
+    fail(`${label}.protocolActivationEvidenceCommit differs from launch protocolOrigin.activationEvidenceCommit`);
+  }
+  if (norm(manifest.protocolContractSourceCommit) !== norm(protocolOrigin.contractSourceCommit)) {
+    fail(`${label}.protocolContractSourceCommit differs from launch protocolOrigin.contractSourceCommit`);
+  }
+  requireBytes32(`${label}.deploymentTxHash`, manifest.deploymentTxHash);
+  requirePositiveNumber(`${label}.deploymentBlock`, manifest.deploymentBlock);
+  requirePositiveNumber(`${label}.verificationBlock`, manifest.verificationBlock);
+  if (Number(manifest.verificationBlock) < Number(manifest.deploymentBlock)) {
+    fail(`${label}.verificationBlock must not precede deploymentBlock`);
+  }
+  requireBytes32(`${label}.managerCodeHash`, manifest.managerCodeHash);
+  requireBytes32(`${label}.feeCollectorCodeHash`, manifest.feeCollectorCodeHash);
+  requireBytes32(`${label}.engineCodeHash`, manifest.engineCodeHash);
+  requireBytes32(`${label}.naraV4HookCodeHash`, manifest.naraV4HookCodeHash);
+  requireBytes32(`${label}.requiredAssetAdapterCodeHash`, manifest.requiredAssetAdapterCodeHash);
+  if (norm(manifest.requiredAssetAdapterCodeHash) !== norm(manifest.adapterCodeHashes?.uniswapV4)) {
+    fail(`${label}.requiredAssetAdapterCodeHash must equal adapterCodeHashes.uniswapV4`);
   }
 
   if (manifest.basketKey !== key) fail(`${label}.basketKey must be ${key}`);
@@ -164,8 +240,8 @@ for (const [key, suffix] of Object.entries(basketEnvSuffix)) {
   eqNumber(`${label}.displayTier`, launchBasket.riskTier, manifest.displayTier);
   eqNumber(`${label}.buyFeeBps`, launchBasket.buyFeeBps, manifest.buyFeeBps);
   eqNumber(`${label}.sellFeeBps`, launchBasket.sellFeeBps, manifest.sellFeeBps);
-  eqNumber(`${label}.withdrawFeeBps`, launchBasket.sellFeeBps, manifest.withdrawFeeBps);
-  eqNumber(`${label}.holdingFeeBps`, 0, manifest.holdingFeeBps);
+  eqNumber(`${label}.withdrawFeeBps`, launchFeePolicy.withdrawFeeBps, manifest.withdrawFeeBps);
+  eqNumber(`${label}.holdingFeeBps`, launchFeePolicy.holdingFeeBps, manifest.holdingFeeBps);
   eqNumber(`${label}.referralShareBps`, 0, manifest.referralShareBps);
   eqNumber(`${label}.maxWeightDeviationBps`, launchBasket.maxWeightDeviationBps, manifest.maxWeightDeviationBps);
   eqNumber(`${label}.minNaraWeightBps`, launchBasket.minNaraWeightBps, manifest.minNaraWeightBps);
@@ -175,9 +251,30 @@ for (const [key, suffix] of Object.entries(basketEnvSuffix)) {
   requireNumber(`${label}.referralShareBps`, manifest.referralShareBps);
   requirePositiveNumber(`${label}.minInputAmount`, manifest.minInputAmount);
 
-  if (!isBytes32(manifest.configHash) || norm(manifest.configHash) === `0x${"0".repeat(64)}`) {
-    fail(`${label}.configHash must be a non-zero bytes32`);
+  requireBytes32(`${label}.configHash`, manifest.configHash);
+
+  eqAddress(`${label}.collectorAdmin`, collectorRoute.admin, manifest.collectorAdmin);
+  eqAddress(`${label}.collectorSwapper`, collectorRoute.swapper, manifest.collectorSwapper);
+  eqAddress(`${label}.collectorRouteManager`, collectorRoute.routeManager, manifest.collectorRouteManager);
+  const roleHolders = [manifest.collectorAdmin, manifest.collectorSwapper, manifest.collectorRouteManager].map(norm);
+  if (new Set(roleHolders).size !== roleHolders.length) {
+    fail(`${label}: collector admin, swapper, and route manager must be distinct`);
   }
+  eqAddress(`${label}.collectorRouter`, collectorRoute.router, manifest.collectorRouter);
+  eqAddress(`${label}.collectorUsdcUsdFeed`, collectorRoute.usdcUsdFeed, manifest.collectorUsdcUsdFeed);
+  eqAddress(`${label}.collectorEthUsdFeed`, collectorRoute.ethUsdFeed, manifest.collectorEthUsdFeed);
+  eqNumber(`${label}.collectorPoolFee`, collectorRoute.poolFee, manifest.collectorPoolFee);
+  eqNumber(
+    `${label}.collectorMaxUsdcOracleAge`,
+    collectorRoute.maxUsdcOracleAgeSeconds,
+    manifest.collectorMaxUsdcOracleAge,
+  );
+  eqNumber(
+    `${label}.collectorMaxEthOracleAge`,
+    collectorRoute.maxEthOracleAgeSeconds,
+    manifest.collectorMaxEthOracleAge,
+  );
+  eqNumber(`${label}.collectorMaxSlippageBps`, collectorRoute.maxSlippageBps, manifest.collectorMaxSlippageBps);
 
   const manifestAssets = manifest.assets ?? [];
   const launchAssets = launchBasket.assets ?? [];

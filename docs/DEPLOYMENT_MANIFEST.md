@@ -38,13 +38,33 @@ Each saved JSON object must contain:
 |---|---|---|
 | `chainId` | integer | `8453` |
 | `basketKey` | string | One storage key from the table above |
+| `originCommit` | 40-character hex string | Immutable reviewed basket release commit |
+| `protocolOriginCommit` | 40-character hex string | Protected protocol release commit from `config/launch-baskets.json` |
+| `protocolActivationEvidenceCommit` | 40-character hex string | Immutable activation evidence commit from launch configuration |
+| `protocolContractSourceCommit` | 40-character hex string | Protected protocol contract/artifact source commit |
+| `deploymentTxHash` | 32-byte hex string | Basket deployment transaction |
+| `deploymentBlock` | integer | Receipt block |
+| `verificationBlock` | integer | Named readback block, not earlier than deployment |
 | `manager` | EVM address string | Deployed immutable manager |
-| `nara` | EVM address string | `0x65E247AA3aa9C0131b2984b894c3D24c41341D7A` |
+| `managerCodeHash` | 32-byte hex string | Exact reviewed manager runtime hash |
+| `nara` | EVM address string | `0xB6333F5D4cEd8dffA80F3F13697D6aA3BB3f19c1` |
+| `engine` | EVM address string | Exact active fixed-v4 Engine |
+| `engineCodeHash` | 32-byte hex string | Exact reviewed Engine runtime hash |
 | `usdc` | EVM address string | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | `weth` | EVM address string | `0x4200000000000000000000000000000000000006` |
+| `naraV4Hook` | EVM address string | Corrected replacement Hook; quarantined incident Hook forbidden |
+| `naraV4HookCodeHash` | 32-byte hex string | Exact corrected Hook runtime hash |
+| `naraV4PoolFee` | integer | Exact verified PoolKey fee |
+| `naraV4TickSpacing` | integer | Exact verified PoolKey tick spacing |
+| `naraV4PoolId` | 32-byte hex string | Exact registered canonical NARA/USDC PoolId |
+| `v4Router` | EVM address string | Canonical Base Universal Router |
+| `permit2` | EVM address string | Canonical Permit2 |
 | `feeCollector` | EVM address string | Deployed canonical V2 collector |
 | `feeCollectorCodeHash` | 32-byte hex string | Exact reviewed runtime code hash for that immutable deployment |
 | `adapters` | object | All five deployed adapter addresses |
+| `adapterCodeHashes` | object | Exact runtime hash for every named adapter |
+| `requiredAssetAdapter` | EVM address string | Must equal `adapters.uniswapV4` |
+| `requiredAssetAdapterCodeHash` | 32-byte hex string | Must equal `adapterCodeHashes.uniswapV4` |
 | `category` | string | Public name |
 | `basketName` | string | Public name |
 | `displayTier` | integer | Exact immutable constructor value; UI must not present it as suitability |
@@ -67,7 +87,8 @@ Each saved JSON object must contain:
 | `collectorUsdcUsdFeed` | EVM address string | Reviewed USDC/USD feed |
 | `collectorEthUsdFeed` | EVM address string | Reviewed ETH/USD feed |
 | `collectorPoolFee` | integer | Direct USDC/WETH pool fee |
-| `collectorMaxOracleAge` | integer | Immutable seconds |
+| `collectorMaxUsdcOracleAge` | integer | Immutable USDC/USD freshness limit in seconds |
+| `collectorMaxEthOracleAge` | integer | Immutable ETH/USD freshness limit in seconds |
 | `collectorMaxSlippageBps` | integer | Immutable basis points, at most 500 |
 
 Do not create a manifest before deployment. Do not insert guessed addresses,
@@ -101,11 +122,21 @@ Run from this repository root:
 ```
 
 The verifier environment must describe the same basket as the selected
-manifest. `VerifyDeployedBasket.s.sol` checks chain ID, manager configuration,
-assets, weights, payment tokens, adapters, zero launch fees, required NARA
-weight, minimum input, configuration hash, exact collector runtime code hash,
-collector immutable bindings, typed route, oracle parameters, and separated
-role holders.
+manifest. It must include `EXPECTED_CONFIG_HASH`, `EXPECTED_MANAGER_CODEHASH`,
+`EXPECTED_ENGINE_CODEHASH`, `EXPECTED_REQUIRED_ASSET_ADAPTER_CODEHASH`, and one
+`EXPECTED_ADAPTER_CODEHASH_<index>` for every adapter in `EXPECTED_ADAPTERS`.
+It must also provide `EXPECTED_NARA_V4_HOOK`,
+`EXPECTED_NARA_V4_HOOK_CODEHASH`, `EXPECTED_NARA_V4_POOL_FEE`,
+`EXPECTED_NARA_V4_TICK_SPACING`, `EXPECTED_V4_ROUTER`, `EXPECTED_PERMIT2`,
+`EXPECTED_MAX_USDC_ORACLE_AGE`, and `EXPECTED_MAX_ETH_ORACLE_AGE` from the same
+reviewed protocol and collector manifests.
+`VerifyDeployedBasket.s.sol` checks chain ID, manager configuration, assets,
+weights, payment tokens, adapters, zero launch fees, required NARA weight,
+minimum input, exact configuration and controlled-contract runtime hashes,
+collector immutable bindings, typed route, oracle parameters, separated role
+holders, and the required adapter's exact Hook/fee/tick-spacing/router/Permit2
+bindings. Retired V3 token/Engine addresses and the quarantined incident v4
+Hook are rejected. The active fixed-v4 NARA and Engine remain valid inputs.
 
 ## Frontend parity
 

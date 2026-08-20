@@ -4,10 +4,15 @@
 >
 > **NARA's designed liquidity home is a taxed Uniswap v4 pool, not a plain pool.**
 > The v4 core stack ships `NARALiquidityGrowthHook` + `NARALiquidityGrowthVault`
-> (`nara-protocol-hardhat/contracts/v4/`). The hook taxes every NARA swap
-> (default **5% buy / 5% sell**, up to 25%/20% under pressure) and routes the tax to
-> the vault, whose **default `routeMode = Liquidity`** compounds it back into the LP.
-> The tax was deliberately designed to **build/deepen liquidity** from trading volume.
+> (`nara-protocol-hardhat/contracts/v4/`). Only swaps through the one registered
+> canonical Hook PoolKey are charged; ordinary NARA transfers and other pools are
+> not. The active default curves start at **5% buy / 5% sell**; same-block
+> pressure can reach **20% buy / 15% sell**. Both curves have a configurable
+> operational cap of **20%**. The contract ceiling is **50%**, but a
+> post-registration curve change is delayed for seven days. Input-currency
+> fees are banked in the vault. One-sided flow cannot become POL immediately: a
+> keeper compounds only when matching NARA/base inventory exists and may receive
+> the configured bounty.
 >
 > **Current decision:** taxed Uniswap v4 is NARA's basket route. `UniswapV4BasketAdapterV1`
 > exists and must be included in every production basket's immutable `adapters[]`.
@@ -83,9 +88,12 @@ Each receipt sell can exit the whole basket into:
 
 ```text
 USDC (the only Basket V1 payment token)
-NARA through requiredAsset when every selected asset has a direct/configured route to NARA
 raw underlying assets through withdrawUnderlying
 ```
+
+The publishable app exposes USDC sell execution plus raw per-asset withdrawal.
+It does not present a whole-position “Convert to NARA” path because the manager
+does not chain `asset -> USDC -> NARA` across separate instructions.
 
 Basket V1 must not allow WETH as a payment token. Its required NARA allocation
 uses a single-hop NARA/USDC v4 adapter; a WETH-funded buy would otherwise attempt
@@ -101,17 +109,24 @@ adapter included before basket deployment.
 ## Deployment order
 
 ```text
-1. Run the entire `DeployMainnetReady.s.sol` sequence on an exact Base-mainnet fork.
-2. Verify all five adapters and the collector's typed router, oracle feeds,
-   pool fee, oracle-age bound, and slippage bound before broadcast.
-3. Review the single production sequence as one unit: adapters,
+1. Use protected protocol release
+   `ce71f4dfc9182ab12e12f9c25e91ec40fdb9cb60`, activation evidence
+   `ba5aaea730b92d8ce12a94926ec076f3fde85982`, and contract/artifact source
+   `027af3f06bbe6dea2c187dfd8062e50c228f1c35`. The quarantined incident Hook is forbidden.
+2. Keep `DeployMainnetReady.s.sol` fail-closed until a basket-specific release
+   authorizes deployment and supplies reviewed inputs.
+3. Run the complete candidate sequence on an exact Base-mainnet fork.
+4. Verify all five adapters and the collector's typed router, oracle feeds,
+   pool fee, independent USDC/USD and ETH/USD oracle-age bounds, and slippage
+   bound before broadcast.
+5. Review the single production sequence as one unit: adapters,
    oracle-bounded V2 collector, immutable receipt manager, and separated role
    assignments.
-4. Broadcast only after the fork evidence and manifests are approved.
-5. Verify each immutable receipt-manager constructor config, collector route,
+6. Broadcast only after the fork evidence and manifests are approved.
+7. Verify each immutable receipt-manager constructor config, collector route,
    and collector role on-chain.
-6. No post-deploy receipt-manager role handoff exists because the manager has no roles.
-7. Static vaults are not part of this launch. `NARAIndexFeeCollectorV2` does not implement
+8. No post-deploy receipt-manager role handoff exists because the manager has no roles.
+9. Static vaults are not part of this launch. `NARAIndexFeeCollectorV2` does not implement
    `setAllowedVault`, `redeemIndexFeeShares`, `REDEEMER_ROLE`, or `VAULT_MANAGER_ROLE`.
    Do not use the superseded V1 static-vault instructions with V2.
 ```
@@ -128,17 +143,21 @@ PancakeV3BasketAdapterV1      — V3 Router     0x1b81D678ffb9C0263b24A97847620C
 UniswapV4BasketAdapterV1      — UniversalRouter 0x6ff5693b99212da76ad316178a184ab56d299b43 + Permit2 0x000000000022D473030F116dDEE9F6B43aC78BA3
 ```
 
-Addresses must be confirmed live on Base at deploy time. DeployMainnetReady.s.sol
-runs _requireCode() on all five before deploy. Override via AERODROME_ROUTER,
-AERODROME_SLIPSTREAM_ROUTER, PANCAKE_V3_ROUTER, V4_UNIVERSAL_ROUTER, and
-V4_PERMIT2 env vars if routers redeploy.
+Addresses must be confirmed on Base at deploy time. The protocol handoff exists,
+but the production entrypoint intentionally reverts until basket deployment is
+separately authorized after exact-fork, route, role, and manifest review. Its
+reviewed replacement must run `_requireCode()` on all five adapters and their
+external dependencies before deployment. Any router replacement requires a new
+reviewed configuration and exact-fork proof.
 
 Frontend NARA routing requires VITE_BASKET_ADAPTER_V4, VITE_NARA_V4_HOOK,
 VITE_NARA_V4_POOL_FEE, and VITE_NARA_V4_TICK_SPACING. If any are missing,
 the app must keep buys disabled.
 
-`UniswapV4BasketAdapterV1` stores the fee, tick spacing, and hook as constructor
-immutables. Every call must pass empty adapter data (`0x`). The frontend must pin
+`UniswapV4BasketAdapterV1` stores the token, base, fee, tick spacing, hook, and
+recomputed PoolId as constructor immutables. Construction requires Hook permission
+bits `0x2088` and exact agreement with the Hook's registered PoolKey. Every call
+must pass empty adapter data (`0x`). The frontend must pin
 NARA to this configured v4 route and must not substitute a discovered hookless
 pool. The NARA leg is exact-input only because the hook rejects exact-output
 swaps.
@@ -216,7 +235,7 @@ approved adapters buy basket assets
 every basket includes NARA
 manager stores exact bought amounts
 manager mints ERC721 receipt
-user sells whole receipt later to USDC/payment token or NARA
+user sells whole receipt later to USDC, or withdraws raw underlying assets
 manager charges buy and sell fees
 ```
 
@@ -241,15 +260,16 @@ Then:
 ```text
 1. User buys basket.
 2. Manager sends buy fee in input token to FeeCollector.
-3. User later sells whole basket to USDC/payment token or NARA.
+3. User later sells the whole basket to USDC or withdraws raw underlying assets.
 4. Manager sends sell fee in output token to FeeCollector.
 5. OR user withdraws underlying tokens directly.
 6. Launch managers set withdrawFeeBps, holdingFeeBps, and referralShareBps to
    zero, so underlying exits do not send long-tail assets to the collector and
    permissionless self-controlled referral rebates are disabled.
 7. SWAPPER_ROLE converts held USDC through the typed oracle-bounded USDC/WETH
-   route after the Base sequencer recovery grace period, or deposits held NARA
-   directly.
+   route after the Base sequencer recovery grace period. USDC/USD and ETH/USD
+   expire independently under their immutable feed-specific age limits. The
+   swapper may instead deposit held NARA directly.
 8. NARA route calls engine.depositRewards(amount).
 9. WETH is unwrapped and atomically calls engine.notifyEthRewards{value: amount}().
 ```
@@ -259,9 +279,11 @@ to the fee collector.
 
 The route manager can propose a replacement router and feed pair, but only the
 independent default admin can execute the proposal after the two-day delay.
-Launch verification must compare the collector's exact runtime code hash,
-immutable bindings, route, oracle parameters, and role holders before a manager
-address is published.
+Feed replacements must remain compatible with the immutable semantic limits:
+`maxUsdcOracleAge` for the configured USDC/USD feed and `maxEthOracleAge` for
+the configured ETH/USD feed. Launch verification must compare the collector's
+exact runtime code hash, immutable bindings, route, both oracle-age parameters,
+slippage bound, and role holders before a manager address is published.
 
 ## Static-vault fee path — not supported by the canonical V2 collector
 

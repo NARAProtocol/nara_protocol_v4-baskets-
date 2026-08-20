@@ -7,6 +7,8 @@ const repoRoot = resolve(appRoot, "..");
 const appConfigPath = resolve(appRoot, "src/shared/baskets.ts");
 const launchConfigPath = resolve(repoRoot, "config/launch-baskets.json");
 const zeroAddress = "0x0000000000000000000000000000000000000000";
+const fullCommitPattern = /^[a-fA-F0-9]{40}$/;
+const bytes32Pattern = /^0x[a-fA-F0-9]{64}$/;
 
 const failures = [];
 
@@ -143,6 +145,19 @@ const appBaskets = parseAppBaskets();
 const launchConfig = JSON.parse(readFileSync(launchConfigPath, "utf8"));
 const launchBaskets = new Map((launchConfig.baskets ?? []).map((basket) => [basket.key, basket]));
 
+const protocolOrigin = launchConfig.protocolOrigin ?? {};
+for (const key of ["releaseCommit", "activationEvidenceCommit", "contractSourceCommit"]) {
+  if (!fullCommitPattern.test(String(protocolOrigin[key] ?? ""))) {
+    fail(`protocolOrigin.${key} must be a full 40-character Git commit`);
+  }
+}
+if (!Number.isInteger(Number(protocolOrigin.verificationBlock)) || Number(protocolOrigin.verificationBlock) <= 0) {
+  fail("protocolOrigin.verificationBlock must be a positive integer");
+}
+if (!bytes32Pattern.test(String(launchConfig.baseAddresses?.NARA_V4_POOL_ID ?? ""))) {
+  fail("baseAddresses.NARA_V4_POOL_ID must be a concrete bytes32");
+}
+
 for (const appBasket of appBaskets) {
   const label = appBasket.name ?? appBasket.key ?? "(unknown)";
   const launchBasket = launchBaskets.get(appBasket.key);
@@ -194,6 +209,20 @@ for (const appBasket of appBaskets) {
 
     if (appAsset.dex === "uniswap_v4" && !launchAsset.v4Pool) {
       fail(`${assetLabel}: frontend v4 asset needs launch v4Pool config`);
+    }
+    if (appAsset.dex === "uniswap_v4" && launchAsset.v4Pool) {
+      if (normalizeAddress(launchAsset.address) !== normalizeAddress(launchConfig.baseAddresses?.NARA)) {
+        fail(`${assetLabel}: NARA address differs from the canonical launch NARA address`);
+      }
+      if (normalizeAddress(launchAsset.v4Pool.hook) !== normalizeAddress(launchConfig.baseAddresses?.NARA_V4_HOOK)) {
+        fail(`${assetLabel}: v4 Hook differs from the canonical launch Hook`);
+      }
+      if (launchAsset.v4Pool.fee !== launchConfig.baseAddresses?.NARA_V4_POOL_FEE) {
+        fail(`${assetLabel}: v4 fee differs from the canonical launch fee`);
+      }
+      if (launchAsset.v4Pool.tickSpacing !== launchConfig.baseAddresses?.NARA_V4_TICK_SPACING) {
+        fail(`${assetLabel}: v4 tick spacing differs from the canonical launch tick spacing`);
+      }
     }
     if (appAsset.dex === "uniswap_v3") {
       if (!launchAsset.v3Pool) fail(`${assetLabel}: frontend v3 asset needs launch v3Pool config`);

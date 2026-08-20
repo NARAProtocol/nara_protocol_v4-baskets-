@@ -2,7 +2,7 @@
 
 ## Status
 
-NARA Baskets is pre-launch. No basket manager, adapter set, or fee collector is
+The NARA basket stack is pre-launch. No basket manager, adapter set, or fee collector is
 published as a Base mainnet deployment. The app is preview-only until verified
 deployment manifests and production environment parity pass.
 

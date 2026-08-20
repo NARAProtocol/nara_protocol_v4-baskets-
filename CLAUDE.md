@@ -14,7 +14,7 @@ Read order: this file → `README.md` → `docs/NARA_INTEGRATION.md` → `docs/R
 The NARA flagship retail product:
 
 ```
-USDC in → category basket exposure out → sell back to USDC or NARA → fees route to NARA rewards
+USDC in → category basket exposure out → sell back to USDC or withdraw raw underlying → fees route to NARA rewards
 ```
 
 User picks a narrative (CORE / AI / FINANCE / CULTURE), pays USDC, and gets a **whole-basket

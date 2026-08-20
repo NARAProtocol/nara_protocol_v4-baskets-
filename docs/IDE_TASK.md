@@ -71,7 +71,9 @@ Manager stores exact bought asset amounts per tokenId.
 Manager mints ERC721 receipt to user.
 User later sells the whole receipt.
 Manager sells all non-output assets through approved adapters.
-Sell output can be USDC/payment token or requiredAsset/NARA.
+The publishable route sells to USDC; direct underlying withdrawal is the
+DEX-independent alternative. NARA remains contract-level allowlisted but has no
+complete production route for every basket component.
 Manager charges sell fee.
 Manager burns receipt.
 User can instead call withdrawUnderlying when all underlying token contracts transfer normally.
@@ -92,7 +94,8 @@ pro-rata vault where mint and redeem follow existing vault balances.
 ```text
 1. Passing Foundry compile.
 2. Passing Foundry test suite.
-3. Exact Base-mainnet fork rehearsal using `DeployMainnetReady.s.sol`.
+3. Exact Base-mainnet fork rehearsal using the separately authorized deployment
+   candidate; the checked-in `DeployMainnetReady.s.sol` remains fail-closed.
 4. Base-mainnet deployment script that fails closed on address or admin errors.
 5. Deployment config for CORE, AI, FINANCE, and CULTURE.
 6. Security notes that state test, fork, and review evidence accurately.
@@ -136,7 +139,8 @@ Manager enforces required NARA allocation at basket creation.
 Manager stores exact bought assets under tokenId.
 Manager mints ERC721 receipt to user.
 User calls sellBasket for whole position.
-Manager sells all assets to USDC/payment token or NARA.
+Manager sells all assets to USDC. A raw underlying withdrawal is available
+without DEX conversion.
 Manager checks whole-position sale and minOutputAmount.
 Manager sends sell fee to NARAIndexFeeCollectorV2.
 Manager sends net output to user and burns receipt.

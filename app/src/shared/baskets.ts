@@ -2,6 +2,16 @@ import { encodeAbiParameters, parseUnits } from "viem";
 
 const viteEnv = import.meta.env as Record<string, string | undefined>;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+// The first public basket launch has referralShareBps = 0. Keep the app's
+// transaction builder explicit and fail closed instead of forwarding ?ref=.
+export const LAUNCH_REFERRER = ZERO_ADDRESS;
+const BPS = 10_000n;
+
+export const MAX_USER_SLIPPAGE_BPS = 500;
+export const MAX_TRANSACTION_DEADLINE_SECONDS = 3_600;
+export const MAX_ROUTE_PRICE_IMPACT_BPS = 100n;
+export const MAX_NARA_DEPTH_BLOCK_AGE_SECONDS = 120n;
+export const MAX_NARA_DEPTH_FUTURE_SKEW_SECONDS = 15n;
 
 export function isViteAddress(value: string | null | undefined): value is `0x${string}` {
   const trimmed = value?.trim();
@@ -81,6 +91,20 @@ export const NARA_V4_POOL_READY =
 export const naraLiquidityGrowthHookAbi = [
   {
     type: "function",
+    name: "quotePoolFeeDetailed",
+    stateMutability: "view",
+    inputs: [
+      { name: "isBuy", type: "bool" },
+      { name: "amountIn", type: "uint256" },
+    ],
+    outputs: [
+      { name: "marginalFeeBps", type: "uint16" },
+      { name: "effectiveFeeBps", type: "uint16" },
+      { name: "feeAmount", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
     name: "protocolDepth",
     stateMutability: "view",
     inputs: [{ name: "currency", type: "address" }],
@@ -92,6 +116,30 @@ export const naraLiquidityGrowthHookAbi = [
     stateMutability: "view",
     inputs: [{ name: "inputCurrency", type: "address" }],
     outputs: [{ name: "depth", type: "uint256" }],
+  },
+] as const;
+
+export const uniswapV4BasketAdapterBindingAbi = [
+  {
+    type: "function",
+    name: "canonicalHooks",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "canonicalFee",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint24" }],
+  },
+  {
+    type: "function",
+    name: "canonicalTickSpacing",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "int24" }],
   },
 ] as const;
 
@@ -107,7 +155,7 @@ export function effectiveNaraUsdcDepth(
   liveDepth: bigint,
 ): bigint {
   if (configuredDepth < 0n || liveDepth < 0n) {
-    throw new Error("NARA depth cannot be negative");
+    throw new Error("$NARA depth cannot be negative");
   }
   return configuredDepth < liveDepth ? configuredDepth : liveDepth;
 }
@@ -116,11 +164,70 @@ export function maxBasketInputForNaraDepth(
   effectiveUsdcDepth: bigint,
   naraWeightBps: number,
 ): bigint {
-  if (effectiveUsdcDepth < 0n) throw new Error("NARA depth cannot be negative");
+  if (effectiveUsdcDepth < 0n) throw new Error("$NARA depth cannot be negative");
   if (!Number.isInteger(naraWeightBps) || naraWeightBps <= 0 || naraWeightBps > 10_000) {
-    throw new Error("NARA weight must be between 1 and 10000 bps");
+    throw new Error("$NARA weight must be between 1 and 10000 bps");
   }
   return (effectiveUsdcDepth * NARA_MAX_ALLOCATION_DEPTH_BPS) / BigInt(naraWeightBps);
+}
+
+export interface NaraDepthCapacityCheck {
+  expectedHook: `0x${string}`;
+  adapterHook: `0x${string}`;
+  expectedPoolFee: number;
+  adapterPoolFee: number;
+  expectedTickSpacing: number;
+  adapterTickSpacing: number;
+  configuredDepth: bigint | null;
+  liveDepth: bigint | null;
+  basketInput: bigint;
+  naraWeightBps: number;
+  blockTimestampSeconds: bigint;
+  nowSeconds: bigint;
+}
+
+/**
+ * Validates a same-block depth/binding snapshot immediately before a quote or
+ * transaction. The cap is deliberately rounded down, so a boundary value is
+ * accepted while one base unit above it is rejected.
+ */
+export function validateNaraDepthCapacity(check: NaraDepthCapacityCheck): {
+  effectiveDepth: bigint;
+  maxBasketInput: bigint;
+} {
+  if (!sameAddress(check.expectedHook, check.adapterHook)) {
+    throw new Error("$NARA v4 adapter Hook does not match the configured depth Hook");
+  }
+  if (
+    check.adapterPoolFee !== check.expectedPoolFee ||
+    check.adapterTickSpacing !== check.expectedTickSpacing
+  ) {
+    throw new Error("$NARA v4 adapter pool binding does not match the configured pool");
+  }
+  if (check.nowSeconds < 0n || check.blockTimestampSeconds < 0n) {
+    throw new Error("$NARA depth timestamp cannot be negative");
+  }
+  if (check.blockTimestampSeconds > check.nowSeconds + MAX_NARA_DEPTH_FUTURE_SKEW_SECONDS) {
+    throw new Error("$NARA depth block timestamp is in the future");
+  }
+  if (
+    check.nowSeconds > check.blockTimestampSeconds &&
+    check.nowSeconds - check.blockTimestampSeconds > MAX_NARA_DEPTH_BLOCK_AGE_SECONDS
+  ) {
+    throw new Error("$NARA depth read is stale");
+  }
+  if (check.basketInput <= 0n) throw new Error("Basket input must be positive");
+  if (check.configuredDepth === null || check.liveDepth === null) {
+    throw new Error("$NARA liquidity depth is unreadable");
+  }
+
+  const effectiveDepth = effectiveNaraUsdcDepth(check.configuredDepth, check.liveDepth);
+  if (effectiveDepth === 0n) throw new Error("$NARA liquidity depth is zero");
+  const maxBasketInput = maxBasketInputForNaraDepth(effectiveDepth, check.naraWeightBps);
+  if (maxBasketInput === 0n || check.basketInput > maxBasketInput) {
+    throw new Error(`Basket input exceeds the current $NARA depth cap of ${maxBasketInput.toString()}`);
+  }
+  return { effectiveDepth, maxBasketInput };
 }
 
 // NARA v4 engine + position NFT + router — filled after the v4 protocol stack deploys.
@@ -172,6 +279,52 @@ export interface BasketConfig {
 
 export type BasketStatus = "preview" | "live" | "exit_only";
 
+export type BasketAccess = {
+  status: BasketStatus;
+  canPreview: true;
+  canBuy: boolean;
+  canExit: boolean;
+};
+
+export function normalizeBasketStatus(value: string | null | undefined): BasketStatus {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "live" || normalized === "exit_only") return normalized;
+  return "preview";
+}
+
+/**
+ * Every basket remains inspectable. Only an explicit live status can enable a
+ * buy; preview and exit-only states never authorize approve/buy actions.
+ */
+export function basketAccessForStatus(status: BasketStatus): BasketAccess {
+  return {
+    status,
+    canPreview: true,
+    canBuy: status === "live",
+    canExit: status === "live" || status === "exit_only",
+  };
+}
+
+/**
+ * A manager address is not activation evidence. Exit reads and writes require
+ * an explicit live/exit-only status and, for position handlers, an exact match
+ * with the configured manager.
+ */
+export function basketManagerCanExit(
+  status: BasketStatus,
+  configuredManager: `0x${string}` | null | undefined,
+  candidateManager: `0x${string}` | null | undefined = configuredManager,
+): boolean {
+  if (
+    !basketAccessForStatus(status).canExit ||
+    !isViteAddress(configuredManager) ||
+    !isViteAddress(candidateManager)
+  ) {
+    return false;
+  }
+  return configuredManager.trim().toLowerCase() === candidateManager.trim().toLowerCase();
+}
+
 // ─── Token colours ────────────────────────────────────────────────────────────
 
 const TOKEN_COLORS: Record<string, string> = {
@@ -196,7 +349,7 @@ export const BASKET_CONFIGS: BasketConfig[] = [
   {
     key: "base", name: "CORE", tagline: "Base liquidity basket",
     riskTier: 1, tierLabel: "Basket", buyFeeBps: 10, sellFeeBps: 10,
-    description: "cbBTC, WETH, AERO, cbETH, and NARA — Bitcoin, ETH, the Base DEX, and staked ETH.",
+    description: "cbBTC, WETH, AERO, cbETH, and $NARA — Bitcoin, ETH, the Base DEX, and staked ETH.",
     assets: [
       { symbol: "NARA",  address: null, dex: "uniswap_v4", feeTier: NARA_V4_POOL_FEE ?? 0, tickSpacing: NARA_V4_TICK_SPACING ?? undefined, v4Hook: NARA_V4_HOOK, weightBps: 1000, decimals: 18, color: tokenColor("NARA") },
       { symbol: "cbBTC", address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", dex: "uniswap_v3", feeTier: 500,  weightBps: 3000, decimals: 8,  color: tokenColor("cbBTC") },
@@ -208,7 +361,7 @@ export const BASKET_CONFIGS: BasketConfig[] = [
   {
     key: "ai", name: "AI", tagline: "AI network basket",
     riskTier: 2, tierLabel: "Basket", buyFeeBps: 20, sellFeeBps: 20,
-    description: "VIRTUAL, VVV, AIXBT, and NARA — AI agent and AI inference tokens on Base.",
+    description: "VIRTUAL, VVV, AIXBT, and $NARA — AI agent and AI inference tokens on Base.",
     assets: [
       { symbol: "NARA",    address: null, dex: "uniswap_v4", feeTier: NARA_V4_POOL_FEE ?? 0, tickSpacing: NARA_V4_TICK_SPACING ?? undefined, v4Hook: NARA_V4_HOOK, weightBps: 1500, decimals: 18, color: tokenColor("NARA") },
       { symbol: "VIRTUAL", address: "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b", dex: "uniswap_v3", feeTier: 3000, weightBps: 3500, decimals: 18, color: tokenColor("VIRTUAL") },
@@ -219,7 +372,7 @@ export const BASKET_CONFIGS: BasketConfig[] = [
   {
     key: "meme", name: "CULTURE", tagline: "Base culture basket",
     riskTier: 3, tierLabel: "Basket", buyFeeBps: 30, sellFeeBps: 30,
-    description: "BRETT, DEGEN, TOSHI, and NARA — Base-native cultural tokens routed through Aerodrome.",
+    description: "BRETT, DEGEN, TOSHI, and $NARA — Base-native cultural tokens routed through Aerodrome.",
     assets: [
       { symbol: "NARA",  address: null, dex: "uniswap_v4", feeTier: NARA_V4_POOL_FEE ?? 0, tickSpacing: NARA_V4_TICK_SPACING ?? undefined, v4Hook: NARA_V4_HOOK, weightBps: 1500, decimals: 18, color: tokenColor("NARA") },
       { symbol: "BRETT", address: "0x532f27101965dd16442E59d40670FaF5eBB142E4", dex: "aerodrome", feeTier: 0, aeroStable: false, aeroVia: "0x4200000000000000000000000000000000000006", weightBps: 3500, decimals: 18, color: tokenColor("BRETT") },
@@ -230,7 +383,7 @@ export const BASKET_CONFIGS: BasketConfig[] = [
   {
     key: "defi", name: "FINANCE", tagline: "On chain finance basket",
     riskTier: 2, tierLabel: "Basket", buyFeeBps: 20, sellFeeBps: 20,
-    description: "AERO, MORPHO, WETH, and NARA — the DEX, the lending protocol, and ETH on Base.",
+    description: "AERO, MORPHO, WETH, and $NARA — the DEX, the lending protocol, and ETH on Base.",
     assets: [
       { symbol: "NARA",   address: null, dex: "uniswap_v4", feeTier: NARA_V4_POOL_FEE ?? 0, tickSpacing: NARA_V4_TICK_SPACING ?? undefined, v4Hook: NARA_V4_HOOK, weightBps: 1500, decimals: 18, color: tokenColor("NARA") },
       { symbol: "AERO",   address: "0x940181a94A35A4569E4529A3CDfB74e38FD98631", dex: "aerodrome", feeTier: 0, aeroStable: false, weightBps: 3500, decimals: 18, color: tokenColor("AERO") },
@@ -242,9 +395,7 @@ export const BASKET_CONFIGS: BasketConfig[] = [
 
 function readBasketStatus(key: string): BasketStatus {
   const env = import.meta.env as Record<string, string | undefined>;
-  const value = env[`VITE_BASKET_STATUS_${key.toUpperCase()}`]?.toLowerCase();
-  if (value === "live" || value === "exit_only") return value;
-  return "preview";
+  return normalizeBasketStatus(env[`VITE_BASKET_STATUS_${key.toUpperCase()}`]);
 }
 
 export const BASKET_STATUSES: Record<string, BasketStatus> = {
@@ -259,7 +410,7 @@ export function basketStatus(config: Pick<BasketConfig, "key">): BasketStatus {
 }
 
 export function basketBuysEnabled(config: Pick<BasketConfig, "key">): boolean {
-  return basketStatus(config) === "live";
+  return basketAccessForStatus(basketStatus(config)).canBuy;
 }
 
 // ─── ABIs ──────────────────────────────────────────────────────────────────────
@@ -731,13 +882,13 @@ export function buildCanonicalNaraV4QuoteCall(
     !asset.tickSpacing ||
     asset.tickSpacing <= 0
   ) {
-    throw new Error("Canonical NARA Uniswap V4 configuration missing");
+    throw new Error("Canonical $NARA Uniswap V4 configuration missing");
   }
   if (
     tokenIn.toLowerCase() !== USDC_ADDRESS.toLowerCase() &&
     tokenOut.toLowerCase() !== USDC_ADDRESS.toLowerCase()
   ) {
-    throw new Error("NARA Uniswap V4 route must use USDC");
+    throw new Error("$NARA Uniswap V4 route must use USDC");
   }
   return {
     dex: "uniswap_v4",
@@ -861,6 +1012,163 @@ export interface PartialSellParams {
   deadline:           bigint;
 }
 
+function sameAddress(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+function validateExecutionSettings(slippageBps: number, deadlineSec: number): void {
+  if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > MAX_USER_SLIPPAGE_BPS) {
+    throw new Error(`Slippage must be between 0 and ${MAX_USER_SLIPPAGE_BPS} bps`);
+  }
+  if (
+    !Number.isInteger(deadlineSec) ||
+    deadlineSec <= 0 ||
+    deadlineSec > MAX_TRANSACTION_DEADLINE_SECONDS
+  ) {
+    throw new Error(`Deadline must be between 1 and ${MAX_TRANSACTION_DEADLINE_SECONDS} seconds`);
+  }
+}
+
+function minimumFromQuote(quote: bigint, slippageBps: number, symbol: string): bigint {
+  if (quote <= 0n) throw new Error(`Missing executable quote for ${symbol}`);
+  const minimum = (quote * BigInt(10_000 - slippageBps)) / BPS;
+  return minimum > 0n ? minimum : 1n;
+}
+
+function requireParallelLength(label: string, actual: number, expected: number): void {
+  if (actual !== expected) {
+    throw new Error(`${label} length must equal ${expected}`);
+  }
+}
+
+function requireMatchingRouteCall(
+  call: QuoteCall,
+  tokenIn: `0x${string}`,
+  tokenOut: `0x${string}`,
+  amountIn: bigint,
+  symbol: string,
+): void {
+  if (call.dex === "direct") throw new Error(`Swap route for ${symbol} cannot be direct`);
+  if (
+    !sameAddress(call.tokenIn, tokenIn) ||
+    !sameAddress(call.tokenOut, tokenOut) ||
+    call.amountIn !== amountIn
+  ) {
+    throw new Error(`Stale or mismatched route for ${symbol}`);
+  }
+}
+
+/**
+ * Compares a full-size quote with a smaller quote on the same route. The probe
+ * already contains venue and Hook fees, so the result isolates nonlinear size
+ * impact instead of counting the route's fixed percentage fees twice.
+ */
+export function routePriceImpactBps(
+  amountIn: bigint,
+  amountOut: bigint,
+  probeAmountIn: bigint,
+  probeAmountOut: bigint,
+): bigint | null {
+  if (amountIn <= 0n || amountOut <= 0n || probeAmountIn <= 0n || probeAmountOut <= 0n) {
+    return null;
+  }
+  const expectedScaled = probeAmountOut * amountIn;
+  const actualScaled = amountOut * probeAmountIn;
+  if (actualScaled >= expectedScaled) return 0n;
+  const lossScaled = expectedScaled - actualScaled;
+  return (lossScaled * BPS + expectedScaled - 1n) / expectedScaled;
+}
+
+/**
+ * Allocates an exact net basket input across weights. Every leg is rounded down,
+ * then the indivisible remainder is assigned to the first largest-weight asset.
+ * Quote construction and transaction construction must share this helper so
+ * their route amounts cannot diverge by one or more token base units.
+ */
+export function allocateBasketInput(netInput: bigint, weightsBps: readonly number[]): bigint[] {
+  if (netInput <= 0n) throw new Error("Net basket input must be positive");
+  if (
+    weightsBps.length === 0 ||
+    weightsBps.some((weight) => !Number.isInteger(weight) || weight <= 0) ||
+    weightsBps.reduce((sum, weight) => sum + weight, 0) !== 10_000
+  ) {
+    throw new Error("Basket weights must be positive integers summing to 10000 bps");
+  }
+
+  const allocations = weightsBps.map((weight) => (netInput * BigInt(weight)) / BPS);
+  const totalAllocated = allocations.reduce((sum, allocation) => sum + allocation, 0n);
+  const remainder = netInput - totalAllocated;
+  if (remainder > 0n) {
+    const maxIndex = weightsBps.reduce(
+      (currentMax, weight, index) => (weight > weightsBps[currentMax] ? index : currentMax),
+      0,
+    );
+    allocations[maxIndex] += remainder;
+  }
+  return allocations;
+}
+
+/**
+ * Detects when a refreshed executable quote has fallen below the minimum
+ * the user reviewed. In that case the interface must show the new quote and
+ * require another confirmation instead of silently weakening the floor.
+ */
+export function refreshedQuotesRequireReview(
+  reviewedQuotes: readonly bigint[],
+  refreshedQuotes: readonly bigint[],
+  slippageBps: number,
+  activeIndexes: readonly number[] = reviewedQuotes.map((_, index) => index),
+): boolean {
+  validateExecutionSettings(slippageBps, 1);
+  if (reviewedQuotes.length !== refreshedQuotes.length) return true;
+  return activeIndexes.some((index) => {
+    const reviewed = reviewedQuotes[index];
+    const refreshed = refreshedQuotes[index];
+    if (reviewed == null || refreshed == null || reviewed <= 0n || refreshed <= 0n) return true;
+    return refreshed < (reviewed * BigInt(10_000 - slippageBps)) / BPS;
+  });
+}
+
+/** Keeps execution minima at least as strict as both the reviewed and refreshed quotes. */
+export function protectedExecutionQuotes(
+  reviewedQuotes: readonly bigint[],
+  refreshedQuotes: readonly bigint[],
+): bigint[] {
+  if (reviewedQuotes.length !== refreshedQuotes.length) {
+    throw new Error("Reviewed and refreshed quote lengths must match");
+  }
+  return refreshedQuotes.map((refreshed, index) => {
+    const reviewed = reviewedQuotes[index];
+    return reviewed > refreshed ? reviewed : refreshed;
+  });
+}
+
+export type NaraHookFeeQuote = {
+  marginalFeeBps: number;
+  effectiveFeeBps: number;
+  feeAmount: bigint;
+  blockNumber: bigint;
+};
+
+/** Any changed dynamic Hook-fee disclosure requires a fresh user confirmation. */
+export function refreshedHookFeesRequireReview(
+  reviewedFees: readonly (NaraHookFeeQuote | null)[],
+  refreshedFees: readonly (NaraHookFeeQuote | null)[],
+  activeIndexes: readonly number[],
+): boolean {
+  if (reviewedFees.length !== refreshedFees.length) return true;
+  return activeIndexes.some((index) => {
+    const reviewed = reviewedFees[index];
+    const refreshed = refreshedFees[index];
+    if (!reviewed || !refreshed) return reviewed !== refreshed;
+    return (
+      reviewed.marginalFeeBps !== refreshed.marginalFeeBps ||
+      reviewed.effectiveFeeBps !== refreshed.effectiveFeeBps ||
+      reviewed.feeAmount !== refreshed.feeAmount
+    );
+  });
+}
+
 function swapInstructionFromQuoteCall(
   call:              QuoteCall,
   minAmountOut:      bigint,
@@ -914,7 +1222,7 @@ function swapInstructionFromQuoteCall(
       call.tokenIn.toLowerCase() !== USDC_ADDRESS.toLowerCase() &&
       call.tokenOut.toLowerCase() !== USDC_ADDRESS.toLowerCase()
     ) {
-      throw new Error("NARA Uniswap V4 route must use USDC");
+      throw new Error("$NARA Uniswap V4 route must use USDC");
     }
     return {
       adapter: v4Adapter,
@@ -954,24 +1262,40 @@ export function buildBuyParams(
   deadlineSec:       number = 300,
   v4Adapter:         `0x${string}` | null = null,
 ): BuyParams {
-  const bps      = 10000n;
-  const buyFee   = (inputAmount * BigInt(config.buyFeeBps)) / bps;
+  validateExecutionSettings(slippageBps, deadlineSec);
+  if (inputAmount <= 0n) throw new Error("Input amount must be positive");
+  if (config.assets.length === 0) throw new Error("Basket has no assets");
+  if (!Number.isInteger(config.buyFeeBps) || config.buyFeeBps < 0 || config.buyFeeBps >= 10_000) {
+    throw new Error("Buy fee must be between 0 and 9999 bps");
+  }
+  requireParallelLength("quotes", quotes.length, config.assets.length);
+  if (routeCalls) requireParallelLength("routeCalls", routeCalls.length, config.assets.length);
+  if (onChainWeightsBps) {
+    requireParallelLength("onChainWeightsBps", onChainWeightsBps.length, config.assets.length);
+  }
+
+  const buyFee   = (inputAmount * BigInt(config.buyFeeBps)) / BPS;
   const netInput = inputAmount - buyFee;
 
-  const resolvedAddresses = config.assets.map((a) =>
-    a.symbol === "NARA" ? naraAddress : (a.address as `0x${string}`),
-  );
+  const resolvedAddresses = config.assets.map((asset) => {
+    if (asset.symbol === "NARA") return naraAddress;
+    if (!asset.address) throw new Error(`Address missing for ${asset.symbol}`);
+    return asset.address;
+  });
 
   const effectiveWeights = config.assets.map((a, i) =>
     onChainWeightsBps ? Number(onChainWeightsBps[i] ?? a.weightBps) : a.weightBps,
   );
+  if (
+    effectiveWeights.some((weight) => !Number.isInteger(weight) || weight <= 0) ||
+    effectiveWeights.reduce((sum, weight) => sum + weight, 0) !== 10_000
+  ) {
+    throw new Error("Basket weights must be positive integers summing to 10000 bps");
+  }
 
-  const allocations = effectiveWeights.map((w) => (netInput * BigInt(w)) / bps);
-  const totalAllocated = allocations.reduce((a, b) => a + b, 0n);
-  const remainder = netInput - totalAllocated;
-  if (remainder > 0n) {
-    const maxIdx = effectiveWeights.reduce((mi, w, i) => (w > effectiveWeights[mi] ? i : mi), 0);
-    allocations[maxIdx] += remainder;
+  const allocations = allocateBasketInput(netInput, effectiveWeights);
+  if (allocations.some((allocation) => allocation <= 0n)) {
+    throw new Error("Input is too small to allocate every basket asset");
   }
 
   const isDirect = (i: number) =>
@@ -982,11 +1306,12 @@ export function buildBuyParams(
   const swaps: SwapInstruction[] = config.assets
     .map((asset, i): SwapInstruction | null => {
       if (isDirect(i)) return null;
-      const rawQuote = quotes[i] ?? 0n;
-      const minOut   = rawQuote > 0n ? (rawQuote * BigInt(10000 - slippageBps)) / bps : 1n;
+      const rawQuote = quotes[i];
+      const minOut = minimumFromQuote(rawQuote, slippageBps, asset.symbol);
       const tokenOut = resolvedAddresses[i];
       const routeCall = routeCalls?.[i];
       if (routeCall) {
+        requireMatchingRouteCall(routeCall, paymentToken, tokenOut, allocations[i], asset.symbol);
         return swapInstructionFromQuoteCall(
           routeCall,
           minOut,
@@ -1021,7 +1346,7 @@ export function buildBuyParams(
       if (asset.dex === "uniswap_v4") {
         if (!v4Adapter) throw new Error("Uniswap V4 adapter missing");
         if (paymentToken.toLowerCase() !== USDC_ADDRESS.toLowerCase()) {
-          throw new Error("NARA Uniswap V4 route must use USDC");
+          throw new Error("$NARA Uniswap V4 route must use USDC");
         }
         return {
           adapter: v4Adapter, tokenIn: paymentToken, tokenOut,
@@ -1039,8 +1364,7 @@ export function buildBuyParams(
 
   const minAmountsOut = config.assets.map((_, i) => {
     if (isDirect(i)) return allocations[i];
-    const q = quotes[i] ?? 0n;
-    return q > 0n ? (q * BigInt(10000 - slippageBps)) / bps : 1n;
+    return minimumFromQuote(quotes[i], slippageBps, config.assets[i].symbol);
   });
 
   return {
@@ -1071,21 +1395,36 @@ export function buildSellParams(
   deadlineSec:        number = 300,
   v4Adapter:          `0x${string}` | null = null,
 ): SellParams {
-  const bps = 10000n;
+  validateExecutionSettings(slippageBps, deadlineSec);
+  if (tokenId <= 0n) throw new Error("Token ID must be positive");
+  if (!Number.isInteger(sellFeeBps) || sellFeeBps < 0 || sellFeeBps >= 10_000) {
+    throw new Error("Sell fee must be between 0 and 9999 bps");
+  }
+  requireParallelLength("assetAmounts", assetAmounts.length, assetAddresses.length);
+  requireParallelLength("sellQuotes", sellQuotes.length, assetAddresses.length);
+  if (routeCalls) requireParallelLength("routeCalls", routeCalls.length, assetAddresses.length);
+
+  let totalGrossQuote = 0n;
 
   const swaps: SwapInstruction[] = assetAddresses
     .map((addr, i): SwapInstruction | null => {
-      const amount = assetAmounts[i] ?? 0n;
+      const amount = assetAmounts[i];
       if (amount === 0n) return null;
-      if (addr.toLowerCase() === outputTokenAddress.toLowerCase()) return null;
-      const quote  = sellQuotes[i]   ?? 0n;
-      const minOut = quote > 0n ? (quote * BigInt(10000 - slippageBps)) / bps : 1n;
-      const isNara = naraAddress && addr.toLowerCase() === naraAddress.toLowerCase();
+      if (sameAddress(addr, outputTokenAddress)) {
+        totalGrossQuote += amount;
+        return null;
+      }
+      const isNara = naraAddress && sameAddress(addr, naraAddress);
       const asset  = isNara
         ? config.assets.find((a) => a.symbol === "NARA")
-        : config.assets.find((a) => a.address?.toLowerCase() === addr.toLowerCase());
+        : config.assets.find((a) => a.address && sameAddress(a.address, addr));
+      if (!asset) throw new Error(`Basket asset configuration missing for ${addr}`);
+      const quote = sellQuotes[i];
+      const minOut = minimumFromQuote(quote, slippageBps, asset.symbol);
+      totalGrossQuote += quote;
       const routeCall = routeCalls?.[i];
       if (routeCall) {
+        requireMatchingRouteCall(routeCall, addr, outputTokenAddress, amount, asset.symbol);
         return swapInstructionFromQuoteCall(
           routeCall,
           minOut,
@@ -1120,7 +1459,7 @@ export function buildSellParams(
       if (asset?.dex === "uniswap_v4") {
         if (!v4Adapter) throw new Error("Uniswap V4 adapter missing");
         if (outputTokenAddress.toLowerCase() !== USDC_ADDRESS.toLowerCase()) {
-          throw new Error("NARA Uniswap V4 route must use USDC");
+          throw new Error("$NARA Uniswap V4 route must use USDC");
         }
         return {
           adapter: v4Adapter, tokenIn: addr, tokenOut: outputTokenAddress,
@@ -1136,11 +1475,10 @@ export function buildSellParams(
     })
     .filter((s): s is SwapInstruction => s !== null);
 
-  const totalGrossQuote = sellQuotes.reduce((a, b) => a + b, 0n);
-  const minOutputAmount =
-    totalGrossQuote > 0n
-      ? (totalGrossQuote * BigInt(10000 - slippageBps) * BigInt(10000 - sellFeeBps)) / (bps * bps)
-      : 1n;
+  if (totalGrossQuote <= 0n) throw new Error("Exit has no executable output");
+  const netMinimum =
+    (totalGrossQuote * BigInt(10_000 - slippageBps) * BigInt(10_000 - sellFeeBps)) / (BPS * BPS);
+  const minOutputAmount = netMinimum > 0n ? netMinimum : 1n;
 
   return {
     tokenId, outputToken: outputTokenAddress, minOutputAmount,
@@ -1169,32 +1507,46 @@ export function buildPartialSellParams(
   deadlineSec:          number = 300,
   v4Adapter:            `0x${string}` | null = null,
 ): PartialSellParams {
-  const bps = 10000n;
+  validateExecutionSettings(slippageBps, deadlineSec);
+  if (tokenId <= 0n) throw new Error("Token ID must be positive");
+  if (!Number.isInteger(sellFeeBps) || sellFeeBps < 0 || sellFeeBps >= 10_000) {
+    throw new Error("Sell fee must be between 0 and 9999 bps");
+  }
+  requireParallelLength("assetAmounts", assetAmounts.length, assetAddresses.length);
+  requireParallelLength("sellQuotes", sellQuotes.length, assetAddresses.length);
+  if (routeCalls) requireParallelLength("routeCalls", routeCalls.length, assetAddresses.length);
+  if (selectedAssetIndexes.length === 0) throw new Error("Select at least one asset to exit");
   const selected = new Set(selectedAssetIndexes);
+  if (selected.size !== selectedAssetIndexes.length) throw new Error("Selected asset indexes must be unique");
+  if ([...selected].some((index) => !Number.isInteger(index) || index < 0 || index >= assetAddresses.length)) {
+    throw new Error("Selected asset index is out of range");
+  }
   let directOutputAmount = 0n;
   let totalGrossQuote = 0n;
 
   const swaps: SwapInstruction[] = assetAddresses
     .map((addr, i): SwapInstruction | null => {
       if (!selected.has(i)) return null;
-      const amount = assetAmounts[i] ?? 0n;
-      if (amount === 0n) return null;
+      const amount = assetAmounts[i];
+      if (amount === 0n) throw new Error(`Selected asset ${i} has no balance`);
 
-      if (addr.toLowerCase() === outputTokenAddress.toLowerCase()) {
+      if (sameAddress(addr, outputTokenAddress)) {
         directOutputAmount += amount;
         totalGrossQuote += amount;
         return null;
       }
 
-      const quote = sellQuotes[i] ?? 0n;
-      totalGrossQuote += quote;
-      const minOut = quote > 0n ? (quote * BigInt(10000 - slippageBps)) / bps : 1n;
-      const isNara = naraAddress && addr.toLowerCase() === naraAddress.toLowerCase();
+      const isNara = naraAddress && sameAddress(addr, naraAddress);
       const asset = isNara
         ? config.assets.find((a) => a.symbol === "NARA")
-        : config.assets.find((a) => a.address?.toLowerCase() === addr.toLowerCase());
+        : config.assets.find((a) => a.address && sameAddress(a.address, addr));
+      if (!asset) throw new Error(`Basket asset configuration missing for ${addr}`);
+      const quote = sellQuotes[i];
+      const minOut = minimumFromQuote(quote, slippageBps, asset.symbol);
+      totalGrossQuote += quote;
       const routeCall = routeCalls?.[i];
       if (routeCall) {
+        requireMatchingRouteCall(routeCall, addr, outputTokenAddress, amount, asset.symbol);
         return swapInstructionFromQuoteCall(
           routeCall,
           minOut,
@@ -1229,7 +1581,7 @@ export function buildPartialSellParams(
       if (asset?.dex === "uniswap_v4") {
         if (!v4Adapter) throw new Error("Uniswap V4 adapter missing");
         if (outputTokenAddress.toLowerCase() !== USDC_ADDRESS.toLowerCase()) {
-          throw new Error("NARA Uniswap V4 route must use USDC");
+          throw new Error("$NARA Uniswap V4 route must use USDC");
         }
         return {
           adapter: v4Adapter, tokenIn: addr, tokenOut: outputTokenAddress,
@@ -1245,10 +1597,10 @@ export function buildPartialSellParams(
     })
     .filter((s): s is SwapInstruction => s !== null);
 
-  const minOutputAmount =
-    totalGrossQuote > 0n
-      ? (totalGrossQuote * BigInt(10000 - slippageBps) * BigInt(10000 - sellFeeBps)) / (bps * bps)
-      : 1n;
+  if (totalGrossQuote <= 0n) throw new Error("Partial exit has no executable output");
+  const netMinimum =
+    (totalGrossQuote * BigInt(10_000 - slippageBps) * BigInt(10_000 - sellFeeBps)) / (BPS * BPS);
+  const minOutputAmount = netMinimum > 0n ? netMinimum : 1n;
 
   return {
     tokenId,

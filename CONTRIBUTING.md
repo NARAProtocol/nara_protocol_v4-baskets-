@@ -1,4 +1,4 @@
-# Contributing to NARA Baskets
+# Contributing to the NARA basket project
 
 Contributions are welcome when they improve correctness, verification,
 integrator usability, accessibility, or technical clarity.

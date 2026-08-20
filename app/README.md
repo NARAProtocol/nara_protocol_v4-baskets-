@@ -1,4 +1,4 @@
-# NARA Baskets app
+# NARA basket app
 
 This directory contains the preview-first basket web application. The contract
 package remains at the repository root.

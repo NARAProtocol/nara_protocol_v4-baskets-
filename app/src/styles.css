@@ -16,13 +16,13 @@
   --line: rgba(228, 221, 210, 0.7);           /* warm grey border */
   --line-strong: #E4DDD2;
   --text: #111111;                            /* near black */
-  --muted: #9A8774;                           /* taupe */
+  --muted: #806D5A;                           /* accessible taupe */
   --accent: #0000FF;                          /* Base Blue — primary action */
   --accent-soft: rgba(0, 0, 255, 0.06);
   --accent-shadow: 0 10px 22px rgba(0, 0, 255, 0.18);
   --panel-shadow: 0 12px 30px rgba(60, 44, 20, 0.07);
   --success: #226f51;
-  --warning: #a06614;                         /* muted amber, not neon */
+  --warning: #8B5210;                         /* accessible muted amber */
   --danger: #9b3a34;
 
   /* ─── Typography ────────────────────────────────────── */
@@ -711,6 +711,7 @@ img {
 }
 
 .nb-settings-label {
+  display: block;
   font-size: 11px;
   color: var(--muted);
   margin: 12px 0 6px;
@@ -1361,7 +1362,7 @@ img {
 .nb-flash.neutral { color: #2d66af; border-color: rgba(45,102,175,0.2); background: rgba(45,102,175,0.08); }
 .nb-flash.error   { color: #b63f38; border-color: rgba(182,63,56,0.22); background: rgba(182,63,56,0.08); }
 .nb-flash.success { color: #226f51; border-color: rgba(34,111,81,0.2);  background: rgba(34,111,81,0.08); }
-.nb-flash.warning { color: #cb7a16; border-color: rgba(203,122,22,0.22);background: rgba(203,122,22,0.08); }
+.nb-flash.warning { color: var(--warning); border-color: rgba(139,82,16,0.28); background: rgba(139,82,16,0.08); }
 
 /* ─── Spinner ────────────────────────────────────────────────── */
 

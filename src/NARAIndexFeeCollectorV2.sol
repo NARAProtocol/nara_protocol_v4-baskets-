@@ -107,7 +107,8 @@ contract NARAIndexFeeCollectorV2 is AccessControl, ReentrancyGuard {
     IERC20 public immutable usdc;
     IERC20 public immutable weth;
     uint8 public immutable usdcDecimals;
-    uint48 public immutable maxOracleAge;
+    uint48 public immutable maxUsdcOracleAge;
+    uint48 public immutable maxEthOracleAge;
     uint16 public immutable maxSlippageBps;
 
     RouteConfig public routeConfig;
@@ -135,7 +136,8 @@ contract NARAIndexFeeCollectorV2 is AccessControl, ReentrancyGuard {
         address swapper_,
         address routeManager_,
         RouteConfig memory initialRoute_,
-        uint48 maxOracleAge_,
+        uint48 maxUsdcOracleAge_,
+        uint48 maxEthOracleAge_,
         uint16 maxSlippageBps_
     ) {
         if (
@@ -155,7 +157,11 @@ contract NARAIndexFeeCollectorV2 is AccessControl, ReentrancyGuard {
         _requireContract(weth_);
         if (INARAEngineRewardsV2(engine_).NARA() != nara_) revert InvalidConfig();
         _validateRoute(initialRoute_);
-        if (maxOracleAge_ < MIN_ORACLE_AGE || maxOracleAge_ > MAX_ORACLE_AGE || maxSlippageBps_ > MAX_SLIPPAGE_BPS) {
+        if (
+            maxUsdcOracleAge_ < MIN_ORACLE_AGE || maxUsdcOracleAge_ > MAX_ORACLE_AGE
+                || maxEthOracleAge_ < MIN_ORACLE_AGE || maxEthOracleAge_ > MAX_ORACLE_AGE
+                || maxSlippageBps_ > MAX_SLIPPAGE_BPS
+        ) {
             revert InvalidConfig();
         }
 
@@ -167,7 +173,8 @@ contract NARAIndexFeeCollectorV2 is AccessControl, ReentrancyGuard {
         usdc = IERC20(usdc_);
         weth = IERC20(weth_);
         usdcDecimals = usdcDecimals_;
-        maxOracleAge = maxOracleAge_;
+        maxUsdcOracleAge = maxUsdcOracleAge_;
+        maxEthOracleAge = maxEthOracleAge_;
         maxSlippageBps = maxSlippageBps_;
         routeConfig = initialRoute_;
 
@@ -267,10 +274,13 @@ contract NARAIndexFeeCollectorV2 is AccessControl, ReentrancyGuard {
         if (amountIn == 0) revert ZeroAmount();
         _requireSequencerHealthy();
         RouteConfig memory route = routeConfig;
-        uint256 usdcPriceWad = _readPriceWad(route.usdcUsdFeed);
-        uint256 ethPriceWad = _readPriceWad(route.ethUsdFeed);
+        uint256 usdcPriceWad = _readPriceWad(route.usdcUsdFeed, maxUsdcOracleAge);
+        uint256 ethPriceWad = _readPriceWad(route.ethUsdFeed, maxEthOracleAge);
         if (usdcPriceWad < USDC_MIN_PRICE_WAD || usdcPriceWad > USDC_MAX_PRICE_WAD) {
             revert OraclePriceOutOfBounds(route.usdcUsdFeed, usdcPriceWad);
+        }
+        if (ethPriceWad < ETH_MIN_PRICE_WAD || ethPriceWad > ETH_MAX_PRICE_WAD) {
+            revert OraclePriceOutOfBounds(route.ethUsdFeed, ethPriceWad);
         }
 
         uint256 usdValueWad = Math.mulDiv(amountIn, usdcPriceWad, 10 ** uint256(usdcDecimals));
@@ -317,13 +327,13 @@ contract NARAIndexFeeCollectorV2 is AccessControl, ReentrancyGuard {
         emit EthRewardsNotified(amount);
     }
 
-    function _readPriceWad(address feed) internal view returns (uint256 priceWad) {
+    function _readPriceWad(address feed, uint48 maxAge) internal view returns (uint256 priceWad) {
         (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
             IAggregatorV3V2(feed).latestRoundData();
         if (answer <= 0 || updatedAt == 0 || updatedAt > block.timestamp || answeredInRound < roundId) {
             revert OracleInvalid(feed);
         }
-        if (block.timestamp - updatedAt > maxOracleAge) revert OracleStale(feed, updatedAt);
+        if (block.timestamp - updatedAt > maxAge) revert OracleStale(feed, updatedAt);
 
         uint8 decimals = IAggregatorV3V2(feed).decimals();
         if (decimals > 18) revert OracleInvalid(feed);
@@ -341,6 +351,23 @@ contract NARAIndexFeeCollectorV2 is AccessControl, ReentrancyGuard {
         if (IAggregatorV3V2(route.usdcUsdFeed).decimals() > 18 || IAggregatorV3V2(route.ethUsdFeed).decimals() > 18) {
             revert InvalidConfig();
         }
+    }
+
+    /// @dev Role rotation must preserve the same separation enforced by the
+    ///      constructor. Admin and route-manager roles also remain contract-held
+    ///      after deployment; the low-trust swapper may be an EOA or automation key.
+    function _grantRole(bytes32 role, address account) internal override returns (bool) {
+        if (
+            (role == DEFAULT_ADMIN_ROLE && (hasRole(SWAPPER_ROLE, account) || hasRole(ROUTE_MANAGER_ROLE, account)))
+                || (role == SWAPPER_ROLE
+                    && (hasRole(DEFAULT_ADMIN_ROLE, account) || hasRole(ROUTE_MANAGER_ROLE, account)))
+                || (role == ROUTE_MANAGER_ROLE
+                    && (hasRole(DEFAULT_ADMIN_ROLE, account) || hasRole(SWAPPER_ROLE, account)))
+        ) {
+            revert RolesMustDiffer();
+        }
+        if (role == DEFAULT_ADMIN_ROLE || role == ROUTE_MANAGER_ROLE) _requireContract(account);
+        return super._grantRole(role, account);
     }
 
     function _requireContract(address account) internal view {

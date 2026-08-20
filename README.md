@@ -1,6 +1,6 @@
 <div align="center">
 
-# NARA Category Baskets
+# NARA — Category Baskets
 
 **Immutable, receipt-based category baskets for Base.**
 
@@ -12,7 +12,7 @@
 
 </div>
 
-NARA Baskets lets a user choose a predefined category, pay USDC, and receive an
+The NARA basket interface lets a user choose a predefined category, pay USDC, and receive an
 ERC-721 receipt for the exact tokens acquired by an immutable basket manager.
 The manager contract holds those tokens against the receipt until the owner
 sells or withdraws them.
@@ -203,6 +203,7 @@ referral-share fees.
 | [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md) | Pre-deployment security gate |
 | [`docs/DEPLOYMENT_MANIFEST.md`](docs/DEPLOYMENT_MANIFEST.md) | Sanitized deployment evidence schema |
 | [`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md) | Current test and tooling evidence |
+| [`docs/ROUND_FLOW_RELEASE_GATE.md`](docs/ROUND_FLOW_RELEASE_GATE.md) | Complete v4 round-flow release gate and unresolved deployment blockers |
 | [`docs/REPOSITORY_MAINTENANCE.md`](docs/REPOSITORY_MAINTENANCE.md) | Mandatory synchronization and change-control protocol |
 
 ## Security model

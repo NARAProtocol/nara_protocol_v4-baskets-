@@ -19,11 +19,19 @@ interface IUniversalRouter {
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
 }
 
+/// @dev Immutable identity exposed by the canonical NARA liquidity-growth hook.
+interface INARALiquidityGrowthHookBinding {
+    function token() external view returns (address);
+    function base() external view returns (address);
+    function poolRegistered() external view returns (bool);
+    function registeredPoolId() external view returns (bytes32);
+}
+
 /// @title Uniswap v4 single-hop swap adapter for NARA basket position managers.
 /// @notice Routes a basket's swaps through a Uniswap v4 pool via the Universal Router and
 ///         Permit2, implementing INARABasketSwapAdapterV1. This enables baskets to trade the
-///         required NARA slice on a hooked v4 pool, so basket flow contributes to the pool's
-///         fee-driven liquidity growth.
+///         required NARA slice on a hooked v4 pool. Hook fees remain banked in their input
+///         currency; only balanced NARA/base inventory can later be compounded by a keeper.
 /// @dev Immutable: no admin, no upgrade path. The Universal Router integration keeps the
 ///      dependency surface to the minimal interfaces declared above (no v4-core import).
 ///
@@ -44,6 +52,8 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
     uint8 private constant SWAP_EXACT_IN_SINGLE = 0x06;
     uint8 private constant SETTLE_ALL = 0x0c;
     uint8 private constant TAKE_ALL = 0x0f;
+    uint160 private constant ALL_HOOK_PERMISSION_FLAGS = (1 << 14) - 1;
+    uint160 public constant REQUIRED_HOOK_PERMISSION_FLAGS = 0x2088;
 
     /// @dev v4 PoolKey. Currency/IHooks are address-wrapped types; encoding as `address`
     ///      produces byte-identical calldata to the periphery's decode.
@@ -69,6 +79,9 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
     uint24 public immutable canonicalFee;
     int24 public immutable canonicalTickSpacing;
     address public immutable canonicalHooks;
+    address public immutable canonicalToken;
+    address public immutable canonicalBase;
+    bytes32 public immutable canonicalPoolId;
 
     error ZeroAddress();
     error ZeroAmount();
@@ -77,20 +90,54 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
     error AmountTooLarge();
     error OutputTooLow(uint256 received, uint256 minimum);
     error InputNotFullyConsumed(uint256 residual);
+    error InvalidHookPermissions(address hook, uint160 expected, uint160 actual);
+    error HookTokenMismatch(address expected, address actual);
+    error HookBaseMismatch(address expected, address actual);
+    error HookPoolNotRegistered();
+    error RegisteredPoolIdMismatch(bytes32 expected, bytes32 actual);
 
     constructor(
         address router_,
         address permit2_,
+        address canonicalToken_,
+        address canonicalBase_,
         uint24 canonicalFee_,
         int24 canonicalTickSpacing_,
         address canonicalHooks_
     ) {
-        if (router_ == address(0) || permit2_ == address(0) || canonicalHooks_ == address(0)) revert ZeroAddress();
+        if (
+            router_ == address(0) || permit2_ == address(0) || canonicalToken_ == address(0)
+                || canonicalBase_ == address(0) || canonicalHooks_ == address(0)
+        ) revert ZeroAddress();
+        if (canonicalToken_ == canonicalBase_) revert InvalidTokens();
+
+        uint160 actualHookFlags = uint160(canonicalHooks_) & ALL_HOOK_PERMISSION_FLAGS;
+        if (actualHookFlags != REQUIRED_HOOK_PERMISSION_FLAGS) {
+            revert InvalidHookPermissions(canonicalHooks_, REQUIRED_HOOK_PERMISSION_FLAGS, actualHookFlags);
+        }
+
+        INARALiquidityGrowthHookBinding hook = INARALiquidityGrowthHookBinding(canonicalHooks_);
+        address hookToken = hook.token();
+        if (hookToken != canonicalToken_) revert HookTokenMismatch(canonicalToken_, hookToken);
+        address hookBase = hook.base();
+        if (hookBase != canonicalBase_) revert HookBaseMismatch(canonicalBase_, hookBase);
+        if (!hook.poolRegistered()) revert HookPoolNotRegistered();
+
+        bytes32 recomputedPoolId =
+            _poolId(canonicalToken_, canonicalBase_, canonicalFee_, canonicalTickSpacing_, canonicalHooks_);
+        bytes32 registeredPoolId = hook.registeredPoolId();
+        if (registeredPoolId != recomputedPoolId) {
+            revert RegisteredPoolIdMismatch(recomputedPoolId, registeredPoolId);
+        }
+
         router = IUniversalRouter(router_);
         permit2 = IPermit2(permit2_);
+        canonicalToken = canonicalToken_;
+        canonicalBase = canonicalBase_;
         canonicalFee = canonicalFee_;
         canonicalTickSpacing = canonicalTickSpacing_;
         canonicalHooks = canonicalHooks_;
+        canonicalPoolId = recomputedPoolId;
     }
 
     /// @inheritdoc INARABasketSwapAdapterV1
@@ -104,6 +151,8 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
         if (tokenIn == address(0) || tokenOut == address(0) || tokenIn == tokenOut) {
             revert InvalidTokens();
         }
+        if (!((tokenIn == canonicalToken && tokenOut == canonicalBase)
+                    || (tokenIn == canonicalBase && tokenOut == canonicalToken))) revert InvalidTokens();
         if (amountIn == 0 || minAmountOut == 0) revert ZeroAmount();
         // v4 swap amounts are uint128.
         if (amountIn > type(uint128).max || minAmountOut > type(uint128).max) revert AmountTooLarge();
@@ -178,5 +227,18 @@ contract UniswapV4BasketAdapterV1 is INARABasketSwapAdapterV1, ReentrancyGuard {
         uint256 outBefore = IERC20(tokenOut).balanceOf(address(this));
         router.execute(abi.encodePacked(V4_SWAP), inputs, block.timestamp);
         received = IERC20(tokenOut).balanceOf(address(this)) - outBefore;
+    }
+
+    function _poolId(address token, address base, uint24 fee, int24 tickSpacing, address hooks)
+        internal
+        pure
+        returns (bytes32)
+    {
+        (address currency0, address currency1) = token < base ? (token, base) : (base, token);
+        return keccak256(
+            abi.encode(
+                PoolKey({currency0: currency0, currency1: currency1, fee: fee, tickSpacing: tickSpacing, hooks: hooks})
+            )
+        );
     }
 }

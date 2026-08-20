@@ -1,6 +1,6 @@
 # Validation Status
 
-Last validated: 2026-07-30.
+Last validated: 2026-08-09.
 
 No independent audit is claimed. Current assurance is repository tests, fork
 verification, and documented internal multi-agent review.
@@ -64,8 +64,8 @@ $rpc = ($rpcLine -split '=', 2)[1].Trim().Trim('"').Trim("'")
 ```text
 Forge version: 1.4.3-stable, called by absolute path.
 Build: pass.
-Deterministic non-fork suite: 148 passed, 0 failed, 1 environment-dependent
-skip (149 total). Fork-named suites were excluded from this command.
+Deterministic non-fork suite: 168 passed, 0 failed, 1 environment-dependent
+skip (169 total). Fork-named suites were excluded from this command.
 CI invariant suite: 4 passed, 0 failed, 0 skipped. Each of the three stateful
 invariants ran 256 campaigns and 16,384 calls; the rescue fuzz property ran
 1,000 cases.
@@ -74,17 +74,17 @@ invariants ran 256 campaigns and 16,384 calls; the rescue fuzz property ran
 Covered non-fork suites:
 
 ```text
-NARAImmutableBasketPositionManagerV1Test    - 49 tests
+NARAImmutableBasketPositionManagerV1Test    - 50 tests
 CategoryIndexSuiteV1Test                    - 19 tests
 NARAIndexFeeCollectorV1Test                 - 14 tests
-NARAIndexFeeCollectorV2Test                 - 23 tests
+NARAIndexFeeCollectorV2Test                 - 31 tests
 AerodromeSlipstreamBasketAdapterV1Test      - 9 tests
 PancakeV3BasketAdapterV1Test                - 10 tests
 UniswapV3BasketAdapterV1Test                - 9 tests
-UniswapV4BasketAdapterV1Test                - 8 tests
-DeployMainnetReadyTest                      - 1 test
+UniswapV4BasketAdapterV1Test                - 13 tests
+DeployMainnetReadyTest                      - 2 tests
 DisabledLegacyDeploymentTest                - 3 tests
-VerifyDeployedBasketTest                    - 3 tests
+VerifyDeployedBasketTest                    - 8 tests
 ```
 
 Fork-dependent suites skipped without their required context:
@@ -141,12 +141,19 @@ aderyn:
 The project uses `via_ir = true` in `foundry.toml` under Solidity 0.8.34.
 
 The receipt manager is tested with mock exact-input adapters plus production
-adapter unit/fork tests. Coverage includes buy, sell-to-USDC, sell-to-NARA,
-partial raw withdrawal, selected-asset partial exit, receiver guards, immutable
+adapter unit/fork tests. Coverage includes buy, sell-to-USDC, contract-level
+sell-to-NARA accounting with mocks (not an available production route), partial
+raw withdrawal, selected-asset partial exit, receiver guards, immutable
 constructor config, holding fee accrual/sweep, referral splits, adapter
 accounting lies, allocation/slippage checks, and solvency views.
 
-Frontend validation for `app/` on 2026-07-29:
+The sequential round-flow regression executes buy with referral accounting,
+partial direct-output sell, full DEX-independent underlying withdrawal, receipt
+burn, both referral claims, permissionless fee sweeps across every asset, and a
+final assertion that all balances, accounted claims, liabilities, and deficits
+are zero.
+
+Frontend validation for `app/` on 2026-08-08:
 
 ```powershell
 npm run test:builders   # pass
@@ -156,10 +163,29 @@ npm run build           # pass
 npm run check           # pass
 ```
 
+The builder test declares and pins its direct `esbuild` dependency, and a
+clean locked install can reproduce the test command. Transaction builders reject
+zero quotes, stale token/amount route calls, invalid array shapes, unsafe
+slippage/deadline values, duplicate partial-exit indexes, and exits without
+executable output. The app also rejects routes whose full-size quote loses more
+than 100 bps versus a 1%-size same-route probe.
+
+The buy path reads the configured Hook depth, live Hook depth, and immutable v4
+adapter Hook/fee/tick binding at one recent block immediately before quoting and
+again immediately before wallet submission. The deterministic builder suite
+covers CORE's 10% NARA weight, the other baskets' 15% weight, exact boundaries,
+rounding, zero/unreadable depth, stale blocks, and Hook/binding mismatches.
+
+The production environment gate was negatively tested. The protocol Hook now
+has immutable release and activation evidence, but any basket marked `live`
+still fails closed until that basket has an approved deployment manifest,
+exact-Base-fork round-flow evidence, verified roles, and environment/manifest
+parity.
+
 `npm run build` emits third-party Rolldown pure-annotation warnings from wallet
 dependencies plus a chunk-size warning, but exits successfully.
 
-Frontend dependency audit on 2026-07-29:
+Frontend dependency audit on 2026-08-08:
 
 ```text
 npm audit --audit-level=high: 0 critical, 0 high, 9 moderate.
@@ -168,13 +194,16 @@ npm audit --audit-level=high: 0 critical, 0 high, 9 moderate.
 The remaining moderate advisory is `uuid < 11.1.1` inside MetaMask connector
 dependencies. npm proposes Wagmi 3 as the automatic fix, but RainbowKit 2.2.11
 requires Wagmi 2. The compatible stack therefore remains on Wagmi 2.19.5 with
-Viem 2.55.10, Vite 8.1.5, Wrangler 4.115.0, and patched Axios/`ws` overrides.
+Viem 2.55.10, Vite 8.1.5, Wrangler 4.120.0, Workers Types 5.20260808.1, and
+patched Axios/`ws` overrides. The focused compatible updates removed the
+`nanoid`, `socket.io-parser`, and `undici` High advisories.
 Do not claim zero advisories; do not use `npm audit fix --force` without a
 reviewed RainbowKit/Wagmi migration and wallet regression plan.
 
-The Base adapter fork suites were rerun on 2026-07-30: 31 passed, 0 failed,
-0 skipped across Uniswap V3, Aerodrome AMM, Aerodrome Slipstream, and
-PancakeSwap V3. The manual GitHub Actions gate runs both the three
+The Base adapter fork suites were rerun single-threaded at Base block
+49,398,601 on 2026-08-01: 31 passed, 0 failed, 0 skipped across Uniswap V3,
+Aerodrome AMM, Aerodrome Slipstream, and PancakeSwap V3. The manual GitHub
+Actions gate runs both the three
 `*Fork.t.sol` suites and the separately named 16-test
 `AerodromeBasketAdapterV1.t.sol` suite so neither group is silently omitted.
 `ForkBuyProof` was not run because it requires the candidate manager and
@@ -184,10 +213,16 @@ not represented as complete.
 
 The frontend production gates currently fail closed, as intended:
 
-- fork mode and a LINK stand-in are still configured;
-- the replacement fee collector, v4 adapter, hook, pool fee, and tick spacing
-  are not populated with verified production values;
-- basket status values are not explicitly live/exit-only; and
+- the corrected replacement v4 Hook now has immutable protected origin and
+  activation evidence, a verified deployed identity, and receipt-pinned state;
+  the basket candidate still lacks its own immutable origin, runtime hashes,
+  exact-fork proof, and deployment manifests;
+- the quarantined incident Hook is explicitly rejected and its address is no
+  longer present in launch configuration;
+- the exact corrected-v4 candidate `ForkBuyProof` has not run;
+- current configured BRETT, TOSHI, MORPHO, and cbETH routes do not establish
+  the required size-impact/depth gate;
+- admin, swapper, and route-manager assignments remain unset; and
 - `deployments/base-mainnet/{base,ai,meme,defi}.json` do not exist.
 
 These are deployment-state failures, not source-test failures. Never replace

@@ -5,5 +5,3 @@
 *.jpeg binary
 *.gif binary
 *.webp binary
-
-package-lock.json -diff

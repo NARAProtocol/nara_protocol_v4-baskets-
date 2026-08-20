@@ -2,17 +2,31 @@
 pragma solidity ^0.8.34;
 
 import {Script} from "forge-std/Script.sol";
-import {console2} from "forge-std/console2.sol";
-import {UniswapV3BasketAdapterV1} from "../src/adapters/UniswapV3BasketAdapterV1.sol";
-import {AerodromeBasketAdapterV1} from "../src/adapters/AerodromeBasketAdapterV1.sol";
-import {AerodromeSlipstreamBasketAdapterV1} from "../src/adapters/AerodromeSlipstreamBasketAdapterV1.sol";
-import {PancakeV3BasketAdapterV1} from "../src/adapters/PancakeV3BasketAdapterV1.sol";
-import {UniswapV4BasketAdapterV1} from "../src/adapters/UniswapV4BasketAdapterV1.sol";
-import {NARAIndexFeeCollectorV2} from "../src/NARAIndexFeeCollectorV2.sol";
 import {NARAImmutableBasketPositionManagerV1} from "../src/NARAImmutableBasketPositionManagerV1.sol";
 
-/// @notice Mainnet-ready deploy: five adapters + oracle-bounded V2 fee collector + one launch basket.
-/// @dev Use this script instead of DeployBaseMainnet.s.sol once the v4 core is live.
+interface ICanonicalV4BasketAdapter {
+    function router() external view returns (address);
+    function permit2() external view returns (address);
+    function canonicalFee() external view returns (uint24);
+    function canonicalTickSpacing() external view returns (int24);
+    function canonicalHooks() external view returns (address);
+    function canonicalToken() external view returns (address);
+    function canonicalBase() external view returns (address);
+    function canonicalPoolId() external view returns (bytes32);
+}
+
+interface ICanonicalNARAV4Hook {
+    function token() external view returns (address);
+    function base() external view returns (address);
+    function poolRegistered() external view returns (bool);
+    function registeredPoolId() external view returns (bytes32);
+}
+
+/// @notice Fail-closed production entrypoint pending basket deployment authorization.
+/// @dev The corrected-v4 protocol handoff is immutable and verified. The environment
+///      list below is context for the isolated basket-configuration helper; it is not
+///      a production procedure until `run()` is rebuilt from an approved basket release
+///      with exact-Base-fork round-flow evidence and a reviewed manifest schema.
 ///
 ///      Required env:
 ///        PRIVATE_KEY                 — deployer EOA (ephemeral)
@@ -28,7 +42,8 @@ import {NARAImmutableBasketPositionManagerV1} from "../src/NARAImmutableBasketPo
 ///        USDC_USD_FEED               — reviewed Base Chainlink-compatible USDC/USD feed
 ///        ETH_USD_FEED                — reviewed Base Chainlink-compatible ETH/USD feed
 ///        FEE_SWAP_POOL_FEE           — direct USDC/WETH Uniswap v3 fee tier
-///        FEE_SWAP_MAX_ORACLE_AGE     — 300..172800 seconds
+///        FEE_SWAP_MAX_USDC_ORACLE_AGE — 300..172800 seconds
+///        FEE_SWAP_MAX_ETH_ORACLE_AGE — 300..172800 seconds
 ///        FEE_SWAP_MAX_SLIPPAGE_BPS   — 0..500 bps
 ///
 ///      Per-basket env (only the first basket; subsequent baskets run separately):
@@ -46,179 +61,26 @@ import {NARAImmutableBasketPositionManagerV1} from "../src/NARAImmutableBasketPo
 ///        BASKET_WEIGHTS              — comma-separated bps list, sum 10000
 contract DeployMainnetReady is Script {
     uint256 internal constant DEFAULT_MIN_INPUT_AMOUNT = 25_000_000; // 25 USDC
+    uint160 internal constant ALL_HOOK_PERMISSION_FLAGS = (1 << 14) - 1;
+    uint160 internal constant REQUIRED_HOOK_PERMISSION_FLAGS = 0x2088;
 
-    error WrongChain(uint256 chainId);
-    error AdminIsDeployer();
-    error RolesMustDiffer();
     error UnsupportedInKindFee();
     error UnsupportedReferralShare();
     error BadExpectedAddress(string label, address expected, address actual);
+    error BadExpectedUint(string label, uint256 expected, uint256 actual);
+    error BadExpectedBytes32(string label, bytes32 expected, bytes32 actual);
     error AddressHasNoCode(string label, address target);
-    error ArrayLengthMismatch(string label, uint256 expected, uint256 actual);
+    error BasketDeploymentReadinessRequired();
+    error V4PoolNotRegistered();
 
-    function run() external {
-        if (block.chainid != 8453) revert WrongChain(block.chainid);
-
-        uint256 pk = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(pk);
-        address admin = vm.envAddress("ADMIN");
-        address swapper = vm.envAddress("SWAPPER");
-        address routeManager = vm.envAddress("ROUTE_MANAGER");
-        if (admin == deployer) revert AdminIsDeployer();
-        if (admin == swapper || admin == routeManager || swapper == routeManager) revert RolesMustDiffer();
-        _requireCode("ADMIN", admin);
-        _requireCode("ROUTE_MANAGER", routeManager);
-        _requireCode("NARA_ENGINE", vm.envAddress("NARA_ENGINE"));
-        _requireCode("NARA", vm.envAddress("NARA"));
-        _requireCode("USDC", vm.envAddress("USDC"));
-        _requireCode("WETH", vm.envAddress("WETH"));
-        _requireCode("UNISWAP_V3_ROUTER02", vm.envAddress("UNISWAP_V3_ROUTER02"));
-
-        vm.startBroadcast(pk);
-
-        address[] memory adapters = _deployAdapters();
-        NARAIndexFeeCollectorV2 feeCollector = _deployFeeCollector(admin, swapper, routeManager);
-        NARAImmutableBasketPositionManagerV1 manager =
-            _deployBasket(vm.envAddress("NARA"), vm.envAddress("USDC"), adapters, address(feeCollector));
-
-        vm.stopBroadcast();
-
-        _logDeploy(deployer, admin, swapper, routeManager, adapters, address(feeCollector), address(manager));
+    /// @notice Intentionally fail closed until a basket-specific deployment is
+    ///         authorized after exact-fork, route, role, and manifest review.
+    function run() external pure {
+        revert BasketDeploymentReadinessRequired();
     }
 
-    /// @dev Deploys the full immutable adapter set so every basket can route across the top Base
-    ///      venues. Verified Base routers (override via env if Aerodrome/Pancake ever redeploy):
-    ///        Aerodrome AMM Router        0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43
-    ///        Aerodrome Slipstream Router 0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5
-    ///        PancakeSwap V3 SwapRouter   0x1b81D678ffb9C0263b24A97847620C99d213eB14
-    function _deployAdapters() internal returns (address[] memory adapters) {
-        address router02 = vm.envAddress("UNISWAP_V3_ROUTER02");
-        address aeroRouter = vm.envOr("AERODROME_ROUTER", address(0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43));
-        address aeroFactory = vm.envOr("AERODROME_FACTORY", address(0x420DD381b31aEf6683db6B902084cB0FFECe40Da));
-        address slipstreamRouter =
-            vm.envOr("AERODROME_SLIPSTREAM_ROUTER", address(0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5));
-        address pancakeRouter = vm.envOr("PANCAKE_V3_ROUTER", address(0x1b81D678ffb9C0263b24A97847620C99d213eB14));
-        address universalRouter = vm.envOr("V4_UNIVERSAL_ROUTER", address(0x6fF5693b99212Da76ad316178A184AB56D299b43));
-        address permit2 = vm.envOr("V4_PERMIT2", address(0x000000000022D473030F116dDEE9F6B43aC78BA3));
-        uint24 v4Fee = uint24(vm.envUint("NARA_V4_POOL_FEE"));
-        int24 v4TickSpacing = int24(uint24(vm.envUint("NARA_V4_POOL_TICK_SPACING")));
-        address v4Hook = vm.envAddress("NARA_V4_LIQUIDITY_GROWTH_HOOK");
-        _requireCode("UNISWAP_V3_ROUTER02", router02);
-        _requireCode("AERODROME_ROUTER", aeroRouter);
-        _requireCode("AERODROME_SLIPSTREAM_ROUTER", slipstreamRouter);
-        _requireCode("PANCAKE_V3_ROUTER", pancakeRouter);
-        _requireCode("V4_UNIVERSAL_ROUTER", universalRouter);
-        _requireCode("V4_PERMIT2", permit2);
-        _requireCode("NARA_V4_LIQUIDITY_GROWTH_HOOK", v4Hook);
-
-        adapters = new address[](5);
-        adapters[0] = address(new UniswapV3BasketAdapterV1(router02));
-        adapters[1] = address(new AerodromeBasketAdapterV1(aeroRouter, aeroFactory));
-        adapters[2] = address(new AerodromeSlipstreamBasketAdapterV1(slipstreamRouter));
-        adapters[3] = address(new PancakeV3BasketAdapterV1(pancakeRouter));
-        adapters[4] = address(new UniswapV4BasketAdapterV1(universalRouter, permit2, v4Fee, v4TickSpacing, v4Hook));
-    }
-
-    function _deployFeeCollector(address admin, address swapper, address routeManager)
-        internal
-        returns (NARAIndexFeeCollectorV2 feeCollector)
-    {
-        address router02 = vm.envAddress("UNISWAP_V3_ROUTER02");
-        address naraEngine = vm.envAddress("NARA_ENGINE");
-        address nara = vm.envAddress("NARA");
-        address usdc = vm.envAddress("USDC");
-        address weth = vm.envAddress("WETH");
-        address usdcUsdFeed = vm.envAddress("USDC_USD_FEED");
-        address ethUsdFeed = vm.envAddress("ETH_USD_FEED");
-        _requireCode("NARA_ENGINE", naraEngine);
-        _requireCode("NARA", nara);
-        _requireCode("USDC", usdc);
-        _requireCode("WETH", weth);
-        _requireCode("UNISWAP_V3_ROUTER02", router02);
-        _requireCode("USDC_USD_FEED", usdcUsdFeed);
-        _requireCode("ETH_USD_FEED", ethUsdFeed);
-
-        NARAIndexFeeCollectorV2.RouteConfig memory route = NARAIndexFeeCollectorV2.RouteConfig({
-            router: router02,
-            usdcUsdFeed: usdcUsdFeed,
-            ethUsdFeed: ethUsdFeed,
-            poolFee: uint24(vm.envUint("FEE_SWAP_POOL_FEE"))
-        });
-        feeCollector = new NARAIndexFeeCollectorV2(
-            naraEngine,
-            nara,
-            usdc,
-            weth,
-            admin,
-            swapper,
-            routeManager,
-            route,
-            uint48(vm.envUint("FEE_SWAP_MAX_ORACLE_AGE")),
-            uint16(vm.envUint("FEE_SWAP_MAX_SLIPPAGE_BPS"))
-        );
-    }
-
-    function _logDeploy(
-        address deployer,
-        address admin,
-        address swapper,
-        address routeManager,
-        address[] memory adapters,
-        address feeCollector,
-        address manager
-    ) internal view {
-        NARAImmutableBasketPositionManagerV1 liveManager = NARAImmutableBasketPositionManagerV1(manager);
-        (
-            string memory basketName,,
-            uint16 buyFeeBps,
-            uint16 sellFeeBps,
-            uint16 maxWeightDeviationBps,
-            address feeRecipient
-        ) = liveManager.basket();
-        address[] memory assets = liveManager.getBasketAssets();
-        uint16[] memory weights = liveManager.getBasketWeightsBps();
-        address[] memory paymentTokens = liveManager.getPaymentTokens();
-
-        console2.log("=== NARA Baskets Mainnet Ready Deploy ===");
-        console2.log("Deployer", deployer);
-        console2.log("Admin (Safe)", admin);
-        console2.log("Swapper", swapper);
-        console2.log("Route manager (timelock)", routeManager);
-        console2.log("UniswapV3BasketAdapterV1", adapters[0]);
-        console2.log("AerodromeBasketAdapterV1", adapters[1]);
-        console2.log("AerodromeSlipstreamBasketAdapterV1", adapters[2]);
-        console2.log("PancakeV3BasketAdapterV1", adapters[3]);
-        console2.log("UniswapV4BasketAdapterV1", adapters[4]);
-        console2.log("NARAIndexFeeCollectorV2", feeCollector);
-        console2.log("NARAImmutableBasketPositionManagerV1", manager);
-        console2.log("Basket name", basketName);
-        console2.log("CategoryId");
-        console2.logBytes32(liveManager.categoryId());
-        console2.log("ConfigHash");
-        console2.logBytes32(liveManager.configHash());
-        console2.log("Fee recipient", feeRecipient);
-        console2.log("Buy fee bps", buyFeeBps);
-        console2.log("Sell fee bps", sellFeeBps);
-        console2.log("Withdraw fee bps", liveManager.withdrawFeeBps());
-        console2.log("Holding fee bps", liveManager.holdingFeeBps());
-        console2.log("Referral share bps", liveManager.referralShareBps());
-        console2.log("Max weight deviation bps", maxWeightDeviationBps);
-        console2.log("Min NARA weight bps", liveManager.minRequiredAssetWeightBps());
-        console2.log("Min input amount", liveManager.minInputAmount());
-        console2.log("Required asset", liveManager.requiredAsset());
-        console2.log("Payment token count", paymentTokens.length);
-        for (uint256 i = 0; i < paymentTokens.length; i++) {
-            console2.log("Payment token", paymentTokens[i]);
-        }
-        if (assets.length != weights.length) {
-            revert ArrayLengthMismatch("assets/weights", assets.length, weights.length);
-        }
-        for (uint256 i = 0; i < assets.length; i++) {
-            console2.log("Basket asset", assets[i]);
-            console2.log("Weight bps", weights[i]);
-        }
-    }
-
+    // This helper is retained only for isolated configuration tests. The
+    // callable script path above cannot reach it.
     function _deployBasket(address nara, address usdc, address[] memory adapters, address feeCollector)
         internal
         returns (NARAImmutableBasketPositionManagerV1 manager)
@@ -262,6 +124,17 @@ contract DeployMainnetReady is Script {
         uint256 referralShareBps = vm.envOr("BASKET_REFERRAL_SHARE_BPS", uint256(0));
         if (referralShareBps != 0) revert UnsupportedReferralShare();
         config.referralShareBps = 0;
+        _requireCanonicalV4Binding(
+            ICanonicalV4BasketAdapter(adapters[4]),
+            nara,
+            usdc,
+            vm.envAddress("V4_UNIVERSAL_ROUTER"),
+            vm.envAddress("V4_PERMIT2"),
+            uint24(vm.envUint("NARA_V4_POOL_FEE")),
+            int24(uint24(vm.envUint("NARA_V4_POOL_TICK_SPACING"))),
+            vm.envAddress("NARA_V4_LIQUIDITY_GROWTH_HOOK"),
+            vm.envBytes32("NARA_V4_POOL_ID")
+        );
         config.maxWeightDeviationBps = uint16(vm.envUint("BASKET_MAX_WEIGHT_DEV_BPS"));
         config.minInputAmount = vm.envOr("BASKET_MIN_INPUT_AMOUNT", DEFAULT_MIN_INPUT_AMOUNT);
         config.feeRecipient = feeCollector;
@@ -272,6 +145,66 @@ contract DeployMainnetReady is Script {
         manager = new NARAImmutableBasketPositionManagerV1(
             vm.envString("BASKET_NAME"), "NARABP", nara, minNaraWeight, config
         );
+    }
+
+    function _requireCanonicalV4Binding(
+        ICanonicalV4BasketAdapter adapter,
+        address expectedToken,
+        address expectedBase,
+        address expectedRouter,
+        address expectedPermit2,
+        uint24 expectedFee,
+        int24 expectedTickSpacing,
+        address expectedHook,
+        bytes32 expectedPoolId
+    ) internal view {
+        uint160 actualFlags = uint160(expectedHook) & ALL_HOOK_PERMISSION_FLAGS;
+        if (actualFlags != REQUIRED_HOOK_PERMISSION_FLAGS) {
+            revert BadExpectedUint("v4Hook.permissionFlags", REQUIRED_HOOK_PERMISSION_FLAGS, actualFlags);
+        }
+
+        ICanonicalNARAV4Hook hook = ICanonicalNARAV4Hook(expectedHook);
+        _requireAddress("v4Hook.token", expectedToken, hook.token());
+        _requireAddress("v4Hook.base", expectedBase, hook.base());
+        if (!hook.poolRegistered()) revert V4PoolNotRegistered();
+
+        bytes32 recomputedPoolId =
+            _v4PoolId(expectedToken, expectedBase, expectedFee, expectedTickSpacing, expectedHook);
+        _requireBytes32("v4Hook.expectedPoolId", recomputedPoolId, expectedPoolId);
+        _requireBytes32("v4Hook.registeredPoolId", recomputedPoolId, hook.registeredPoolId());
+        _requireAddress("v4Adapter.router", expectedRouter, adapter.router());
+        _requireAddress("v4Adapter.permit2", expectedPermit2, adapter.permit2());
+        _requireUint("v4Adapter.canonicalFee", expectedFee, adapter.canonicalFee());
+        _requireUint(
+            "v4Adapter.canonicalTickSpacing",
+            uint256(uint24(expectedTickSpacing)),
+            uint256(uint24(adapter.canonicalTickSpacing()))
+        );
+        _requireAddress("v4Adapter.canonicalHooks", expectedHook, adapter.canonicalHooks());
+        _requireAddress("v4Adapter.canonicalToken", expectedToken, adapter.canonicalToken());
+        _requireAddress("v4Adapter.canonicalBase", expectedBase, adapter.canonicalBase());
+        _requireBytes32("v4Adapter.canonicalPoolId", recomputedPoolId, adapter.canonicalPoolId());
+    }
+
+    function _v4PoolId(address token, address base, uint24 fee, int24 tickSpacing, address hooks)
+        internal
+        pure
+        returns (bytes32)
+    {
+        (address currency0, address currency1) = token < base ? (token, base) : (base, token);
+        return keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks));
+    }
+
+    function _requireAddress(string memory label, address expected, address actual) internal pure {
+        if (actual != expected) revert BadExpectedAddress(label, expected, actual);
+    }
+
+    function _requireUint(string memory label, uint256 expected, uint256 actual) internal pure {
+        if (actual != expected) revert BadExpectedUint(label, expected, actual);
+    }
+
+    function _requireBytes32(string memory label, bytes32 expected, bytes32 actual) internal pure {
+        if (actual != expected) revert BadExpectedBytes32(label, expected, actual);
     }
 
     function _requireCode(string memory label, address target) internal view {
