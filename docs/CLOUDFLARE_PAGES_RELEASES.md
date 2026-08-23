@@ -10,7 +10,7 @@ not part of the supported flow.
 
 | Lane | Source | Cloudflare branch | Stable URL | Release behavior |
 |---|---|---|---|---|
-| Development | Latest protected `main` commit whose `Baskets CI` push run passed | `development` | `https://development.nara-baskets.pages.dev` or the configured development domain | Automatic, preview-only, no buys or exits, `noindex` |
+| Development | Latest protected `main` commit whose `Baskets CI` push run passed | `development` | `https://development.nara-v4-console-preview.pages.dev` or the configured development domain | Automatic, preview-only, no buys or exits, `noindex` |
 | Production | A full signed commit SHA already merged into protected `main` | `main` | `https://app.naraprotocol.com` | Manual GitHub workflow plus `cloudflare-production` environment approval |
 | Ad hoc check | Any deployed URL | n/a | Workflow input | Read-only smoke verification only |
 
@@ -38,23 +38,29 @@ value-bearing actions is not.
 These steps require a human Cloudflare account owner. They are account changes,
 not contract deployments.
 
-1. Confirm whether a Pages project named `nara-baskets` already exists.
-   `nara-baskets.pages.dev` returned NXDOMAIN on 2026-08-23, so project creation
-   is currently expected.
-2. Create a Pages Direct Upload project named `nara-baskets` with production
-   branch `main`. If a Git-integrated project already exists, keep it but
-   disable automatic production and preview builds before enabling the Actions
-   workflows. Never leave Git builds and Wrangler uploads racing each other.
-3. Run one development deployment before attaching domains. Confirm that
-   `development.nara-baskets.pages.dev` resolves and passes `Deployment smoke`.
-4. Attach `app.naraprotocol.com` to the production environment through Pages >
-   Custom domains. Remove or disable the existing route/origin that currently
-   returns the empty Cloudflare 404. Do not attach this hostname to the v4 test
-   console.
-5. Optionally attach `dev.app.naraprotocol.com` to the `development` branch
+The read-only Cloudflare account audit on 2026-08-23 proved that the existing
+project is `nara-v4-console-preview`, its production branch is `main`, and
+`app.naraprotocol.com` is already attached. The project is still Git-connected
+to the obsolete `NARAProtocol/nara_protocol_v4` source rather than the
+authoritative `NARAProtocol/nara_protocol_v4_baskets` repository. Cloudflare
+supports Wrangler uploads to an existing Git-integrated Pages project after its
+automatic builds are disabled, so preserve the project and domain instead of
+creating a second project.
+
+1. Automatic production and preview deployments from the obsolete Git source
+   were disabled through the authenticated Cloudflare API on 2026-08-23 and
+   verified as `false`. Keep both controls disabled so obsolete Git builds and
+   GitHub Actions uploads cannot race each other.
+2. Run one development deployment from the guarded GitHub workflow. Confirm
+   that `development.nara-v4-console-preview.pages.dev` resolves and passes
+   `Deployment smoke`.
+3. Keep `app.naraprotocol.com` attached to `nara-v4-console-preview`. Do not
+   create another project or move the domain unless a separately reviewed
+   migration requires it.
+4. Optionally attach `dev.app.naraprotocol.com` to the `development` branch
    alias. Put the development/preview URLs behind Cloudflare Access when they
    should be team-only.
-6. Configure runtime variables and secrets separately for Preview and
+5. Configure runtime variables and secrets separately for Preview and
    Production. A changed binding or secret requires a new deployment before it
    can be verified.
 
@@ -89,8 +95,8 @@ Create these GitHub environments:
 - Variables: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_PAGES_PROJECT`,
   `CLOUDFLARE_PRODUCTION_URL`, and the reviewed public `VITE_*` configuration.
 
-Set `CLOUDFLARE_PAGES_PROJECT=nara-baskets`,
-`CLOUDFLARE_DEVELOPMENT_URL=https://development.nara-baskets.pages.dev`, and
+Set `CLOUDFLARE_PAGES_PROJECT=nara-v4-console-preview`,
+`CLOUDFLARE_DEVELOPMENT_URL=https://development.nara-v4-console-preview.pages.dev`, and
 `CLOUDFLARE_PRODUCTION_URL=https://app.naraprotocol.com` unless the Cloudflare
 project evidence proves different values.
 
@@ -198,7 +204,7 @@ node scripts/check-deployment.mjs http://127.0.0.1:4175 --mode=preview
 Deployed check:
 
 ```powershell
-npm run check:deployment --prefix app -- https://development.nara-baskets.pages.dev --mode=preview --sha=<full-commit>
+npm run check:deployment --prefix app -- https://development.nara-v4-console-preview.pages.dev --mode=preview --sha=<full-commit>
 ```
 
 The check requires the application shell, local assets, baseline security
@@ -221,10 +227,15 @@ Function boundary.
 - Preview deploy attempts a transaction: treat this as a release blocker. The
   `check:preview-env` gate and UI status normalization must both remain intact.
 
-## Account-state evidence still required
+## Account-state evidence
 
-This repository implementation performed no Cloudflare account mutation and no
-production deployment. Before the first release, record the project ID,
-production branch, custom-domain association, environment variable names,
-secret names, token scope, development deployment ID, and production rollback
+The 2026-08-23 OAuth audit recorded the project name, production branch,
+obsolete Git source, custom-domain association, configuration names, and latest
+deployment states without recording account IDs, deployment UUIDs, or secret
+values. The latest production deployment reported success; the latest preview
+deployment reported a build failure. The same authenticated session disabled
+automatic production and preview Git deployments and verified both flags as
+`false`; it did not change a deployment, domain, DNS record, binding, secret, or
+production artifact. Before the first guarded release, record the
+least-privilege token scope, development deployment ID, and production rollback
 target without recording any secret values.

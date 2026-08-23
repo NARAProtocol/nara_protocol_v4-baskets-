@@ -21,7 +21,12 @@ Evidence state: implemented and locally tested on an unmerged working tree.
 ## Observed starting state
 
 - `app.naraprotocol.com` returned an empty Cloudflare HTTP 404 on 2026-08-23.
-- `nara-baskets.pages.dev` did not resolve.
+- `nara-baskets.pages.dev` did not resolve. A later authenticated read-only
+  account audit identified the actual project as `nara-v4-console-preview`.
+- `app.naraprotocol.com` was already attached to that project, but its Git
+  source was the obsolete `NARAProtocol/nara_protocol_v4` repository. Its latest
+  production deployment reported success while its latest preview build had
+  failed.
 - GitHub had no deployment workflow, deployment records, environments, Actions
   variables, or Actions secrets for this repository.
 - The only deploy entry was a manual local Wrangler command capable of labeling
@@ -49,7 +54,10 @@ passed: HTTP 200, 14 local assets, release mode preview, Pages Function HTTP 400
 ## Deployment and security state
 
 - Onchain or production writes: none.
-- Cloudflare account writes: none.
+- Cloudflare account write on 2026-08-23: disabled automatic production and
+  preview Git deployments on `nara-v4-console-preview` and verified both flags
+  as `false`. No deployment, domain, DNS record, binding, secret, or production
+  artifact changed.
 - GitHub configuration writes: created `cloudflare-development` and
   `cloudflare-production`; restricted production to protected branches; set the
   non-secret project and stable URL variables; bound required status checks to
@@ -65,8 +73,9 @@ passed: HTTP 200, 14 local assets, release mode preview, Pages Function HTTP 400
 ## Required downstream/account handoff
 
 Follow [`../CLOUDFLARE_PAGES_RELEASES.md`](../CLOUDFLARE_PAGES_RELEASES.md) to
-create or identify the `nara-baskets` Pages project, configure the two GitHub
-environments, attach `app.naraprotocol.com`, perform the first development
-deployment, and record its immutable evidence. Public documentation must not
-claim the basket product is available until deployment, activation, user-flow,
-and exit evidence all exist.
+disable automatic builds from the obsolete Git source on
+`nara-v4-console-preview`, finish the two GitHub environments, perform the first
+guarded development deployment, and record its immutable evidence. Keep
+`app.naraprotocol.com` attached to the existing project. Public documentation
+must not claim the basket product is available until deployment, activation,
+user-flow, and exit evidence all exist.

@@ -33,8 +33,8 @@ jobs:
       NARA_PRODUCTION_BRANCH: main
       CF_PAGES_BRANCH: development
       CF_PAGES_COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
-      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'nara-baskets' }}
-      TARGET_URL: ${{ vars.CLOUDFLARE_DEVELOPMENT_URL || 'https://development.nara-baskets.pages.dev' }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'nara-v4-console-preview' }}
+      TARGET_URL: ${{ vars.CLOUDFLARE_DEVELOPMENT_URL || 'https://development.nara-v4-console-preview.pages.dev' }}
       VITE_RAINBOW_PROJECT_ID: ${{ vars.VITE_RAINBOW_PROJECT_ID }}
       VITE_WALLETCONNECT_PROJECT_ID: ${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}
       VITE_USE_FORK: "false"

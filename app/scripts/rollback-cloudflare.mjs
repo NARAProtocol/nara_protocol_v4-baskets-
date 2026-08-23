@@ -2,7 +2,7 @@ import process from "node:process";
 
 const deploymentId = process.argv[2];
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-const project = process.env.CLOUDFLARE_PAGES_PROJECT || "nara-baskets";
+const project = process.env.CLOUDFLARE_PAGES_PROJECT || "nara-v4-console-preview";
 const token = process.env.CLOUDFLARE_API_TOKEN;
 
 if (!/^[a-fA-F0-9-]{36}$/.test(deploymentId ?? "")) {

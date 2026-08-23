@@ -1,4 +1,4 @@
-name = "nara-baskets"
+name = "nara-v4-console-preview"
 compatibility_date = "2026-05-28"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "./dist"

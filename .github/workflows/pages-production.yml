@@ -41,7 +41,7 @@ jobs:
       CF_PAGES_BRANCH: main
       CF_PAGES_COMMIT_SHA: ${{ inputs.release_sha }}
       CHANGE_ID: ${{ inputs.change_id }}
-      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'nara-baskets' }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'nara-v4-console-preview' }}
       TARGET_URL: ${{ vars.CLOUDFLARE_PRODUCTION_URL || 'https://app.naraprotocol.com' }}
       VITE_RAINBOW_PROJECT_ID: ${{ vars.VITE_RAINBOW_PROJECT_ID }}
       VITE_WALLETCONNECT_PROJECT_ID: ${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}
