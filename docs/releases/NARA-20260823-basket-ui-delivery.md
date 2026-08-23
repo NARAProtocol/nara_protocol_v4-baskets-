@@ -61,10 +61,10 @@ passed: HTTP 200, 14 local assets, release mode preview, Pages Function HTTP 400
 - GitHub configuration writes: created `cloudflare-development` and
   `cloudflare-production`; restricted production to protected branches; set the
   non-secret project and stable URL variables; bound required status checks to
-  the GitHub Actions app.
+  the GitHub Actions app; required the `NARAProtocol` production reviewer; and
+  disabled administrator bypass for production.
 - GitHub configuration still missing: Cloudflare account ID, least-privilege
-  environment tokens, reviewed `VITE_*` values, and an optional production
-  reviewer rule.
+  environment tokens, and reviewed `VITE_*` values.
 - Secrets printed: no.
 - Contract source changes: none.
 - Activated basket state: blocked as designed.

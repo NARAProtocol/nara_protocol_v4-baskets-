@@ -90,7 +90,8 @@ Create these GitHub environments:
 ### `cloudflare-production`
 
 - Restrict deployment branches to protected `main`.
-- Require a maintainer reviewer where the GitHub plan permits it.
+- Require the `NARAProtocol` maintainer reviewer. Self-review remains permitted
+  for the solo maintainer, but administrator bypass is disabled.
 - Secret: a separate least-privilege `CLOUDFLARE_API_TOKEN`.
 - Variables: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_PAGES_PROJECT`,
   `CLOUDFLARE_PRODUCTION_URL`, and the reviewed public `VITE_*` configuration.
@@ -99,6 +100,12 @@ Set `CLOUDFLARE_PAGES_PROJECT=nara-v4-console-preview`,
 `CLOUDFLARE_DEVELOPMENT_URL=https://development.nara-v4-console-preview.pages.dev`, and
 `CLOUDFLARE_PRODUCTION_URL=https://app.naraprotocol.com` unless the Cloudflare
 project evidence proves different values.
+
+As verified on 2026-08-23, both environments exist, production is limited to
+protected branches, the `NARAProtocol` production reviewer is required, and
+administrator bypass is disabled. The project and stable URL variables are set;
+the account ID and environment secrets remain intentionally unset until fresh
+credentials replace the exposed credentials.
 
 The Actions workflows accept these public build variables:
 
