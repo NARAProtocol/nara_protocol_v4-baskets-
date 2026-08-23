@@ -60,5 +60,6 @@ flows, or design work, read **both** of the following in this order:
 
 ## Shipping Check
 
-Run `npm run test:builders`, `npm run check:copy`,
-`npm run check:launch-config`, and `npm run build` before handoff.
+Run `npm run build:cf` and `npm audit --audit-level=high` before handoff. This
+includes builders, copy, launch parity, TypeScript, Vite, Pages Functions,
+distribution evidence, security headers, and bundle ceilings.

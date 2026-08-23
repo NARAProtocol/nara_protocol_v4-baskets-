@@ -41,6 +41,16 @@ manifests are absent.
 
 ## Deployment
 
-Production deployment is not a routine contributor action. It requires explicit
-maintainer authorization after contract deployment, manifest verification, app
-parity, required CI, and the final review screen have all been verified.
+GitHub is the only supported deployment entry point. A successful protected
+`main` CI run automatically refreshes the fail-closed Cloudflare development
+preview. Production promotion requires the `Pages production` workflow, an
+exact signed commit already merged into `main`, a Change-ID, and the protected
+GitHub production environment.
+
+Read [`../docs/CLOUDFLARE_PAGES_RELEASES.md`](../docs/CLOUDFLARE_PAGES_RELEASES.md)
+for one-time setup, environment variables, daily promotion, evidence, and
+rollback. Do not use a local Wrangler command to publish production.
+
+Production activation is not a routine contributor action. It remains blocked
+until contract deployment, manifest verification, environment parity, required
+CI, and the final review screen have all been verified.

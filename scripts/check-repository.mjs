@@ -31,6 +31,8 @@ const requiredFiles = [
   "docs/REPOSITORY_MAINTENANCE.md",
   "docs/VALIDATION_STATUS.md",
   "docs/UI_UX_NEUTRAL_ACTION_HIERARCHY.md",
+  "docs/CLOUDFLARE_PAGES_RELEASES.md",
+  "docs/releases/NARA-20260823-basket-ui-delivery.md",
   "app/README.md",
   "app/AGENTS.md",
   "app/DESIGN.md",
@@ -38,6 +40,15 @@ const requiredFiles = [
   "app/.dev.vars.example",
   "app/package.json",
   "app/package-lock.json",
+  "app/public/_headers",
+  "app/public/favicon.svg",
+  "app/scripts/build-cloudflare.mjs",
+  "app/scripts/check-deployment.mjs",
+  "app/scripts/check-dist.mjs",
+  "app/scripts/check-preview-env.mjs",
+  "app/scripts/hash-dist.mjs",
+  "app/scripts/record-deployment.mjs",
+  "app/scripts/rollback-cloudflare.mjs",
   ".github/CODEOWNERS",
   ".github/dependabot.yml",
   ".github/pull_request_template.md",
@@ -45,6 +56,10 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/proposal.yml",
   ".github/workflows/ci.yml",
   ".github/workflows/codeql.yml",
+  ".github/workflows/deployment-smoke.yml",
+  ".github/workflows/pages-development.yml",
+  ".github/workflows/pages-production.yml",
+  ".github/workflows/pages-rollback.yml",
 ];
 
 const secretPatterns = [
@@ -66,6 +81,10 @@ const secretPatterns = [
   {
     name: "GitHub token",
     pattern: /\b(?:ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/g,
+  },
+  {
+    name: "Cloudflare API token",
+    pattern: /\bcfat_[A-Za-z0-9_-]{20,}\b/g,
   },
   {
     name: "provider API token",

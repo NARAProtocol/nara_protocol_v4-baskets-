@@ -38,7 +38,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
   }
 
-  let body: { address?: string; blockchains?: string[]; assets?: string[] };
+  if (!env.ONRAMP_ALLOWED_ORIGINS?.trim()) {
+    console.error("onramp-token: ONRAMP_ALLOWED_ORIGINS is required when CDP credentials exist");
+    return json({ error: "onramp_not_configured" }, { status: 503 });
+  }
+
+  let body: { address?: string };
   try {
     body = await request.json();
   } catch {
@@ -70,8 +75,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       method: "POST",
       headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        addresses: [{ address, blockchains: body.blockchains ?? ["base"] }],
-        assets: body.assets ?? ["USDC"],
+        addresses: [{ address, blockchains: ["base"] }],
+        assets: ["USDC"],
       }),
     });
   } catch (error) {
@@ -80,8 +85,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   if (!upstream.ok) {
-    const detail = await upstream.text().catch(() => "");
-    console.error("onramp-token: CDP rejected the request", upstream.status, detail.slice(0, 500));
+    console.error("onramp-token: CDP rejected the request", upstream.status);
     return json({ error: "upstream_rejected", status: upstream.status }, { status: 502 });
   }
 

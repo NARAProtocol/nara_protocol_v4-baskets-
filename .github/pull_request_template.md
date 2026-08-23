@@ -50,10 +50,12 @@ List every affected file from `docs/REPOSITORY_MAINTENANCE.md` and mark it
 - [ ] CI-profile invariant tests
 - [ ] `npm ci --prefix app`
 - [ ] `npm run check --prefix app`
+- [ ] `npm run build:cf --prefix app`
 - [ ] `npm audit --prefix app --audit-level=high`
 - [ ] Applicable static analysis or Base fork tests
 - [ ] `git diff --check`
 - [ ] Complete diff reviewed
+- [ ] Deployment workflow/config impact reviewed; deployed smoke recorded when applicable
 
 Record command results and every skipped environment-dependent gate.
 

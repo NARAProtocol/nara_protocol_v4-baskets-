@@ -352,7 +352,7 @@ the lockboard merely to enable Graduation.
 - [ ] VIRTUAL + AIXBT token addresses verified on-chain
 - [ ] `npm run typecheck` clean
 - [ ] `npm run build` clean
-- [ ] `npm run deploy:cf:prod`
+- [ ] Run the protected `Pages production` GitHub workflow for an exact merged commit
 
 ---
 

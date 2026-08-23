@@ -27,7 +27,11 @@ function parseTokenQuery(url: URL): { symbol: string; address: string }[] {
   const symbols = url.searchParams.get("symbols");
   if (!raw) return [];
 
-  const addresses = raw.split(",").map((a) => a.trim()).filter(Boolean);
+  const addresses = raw
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => /^0x[a-fA-F0-9]{40}$/.test(address))
+    .slice(0, 12);
   const symbolList = symbols?.split(",").map((s) => s.trim()) ?? [];
 
   return addresses.map((address, i) => ({

@@ -1,0 +1,153 @@
+name: Pages production
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full signed commit SHA already merged into protected main
+        required: true
+        type: string
+      change_id:
+        description: NARA-YYYYMMDD-short-name release identifier
+        required: true
+        type: string
+      release_mode:
+        description: Keep preview until manifests and activation evidence pass
+        required: true
+        default: preview
+        type: choice
+        options:
+          - preview
+          - activated
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nara-baskets-pages-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: production · verify · deploy · smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: cloudflare-production
+      url: ${{ vars.CLOUDFLARE_PRODUCTION_URL }}
+    env:
+      NARA_RELEASE_MODE: ${{ inputs.release_mode }}
+      NARA_PRODUCTION_BRANCH: main
+      CF_PAGES_BRANCH: main
+      CF_PAGES_COMMIT_SHA: ${{ inputs.release_sha }}
+      CHANGE_ID: ${{ inputs.change_id }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'nara-baskets' }}
+      TARGET_URL: ${{ vars.CLOUDFLARE_PRODUCTION_URL || 'https://app.naraprotocol.com' }}
+      VITE_RAINBOW_PROJECT_ID: ${{ vars.VITE_RAINBOW_PROJECT_ID }}
+      VITE_WALLETCONNECT_PROJECT_ID: ${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}
+      VITE_USE_FORK: "false"
+      VITE_BASKET_MANAGER_BASE: ${{ vars.VITE_BASKET_MANAGER_BASE }}
+      VITE_BASKET_MANAGER_AI: ${{ vars.VITE_BASKET_MANAGER_AI }}
+      VITE_BASKET_MANAGER_MEME: ${{ vars.VITE_BASKET_MANAGER_MEME }}
+      VITE_BASKET_MANAGER_DEFI: ${{ vars.VITE_BASKET_MANAGER_DEFI }}
+      VITE_BASKET_STATUS_BASE: ${{ vars.VITE_BASKET_STATUS_BASE }}
+      VITE_BASKET_STATUS_AI: ${{ vars.VITE_BASKET_STATUS_AI }}
+      VITE_BASKET_STATUS_MEME: ${{ vars.VITE_BASKET_STATUS_MEME }}
+      VITE_BASKET_STATUS_DEFI: ${{ vars.VITE_BASKET_STATUS_DEFI }}
+      VITE_BASKET_ADAPTER: ${{ vars.VITE_BASKET_ADAPTER }}
+      VITE_BASKET_ADAPTER_AERO: ${{ vars.VITE_BASKET_ADAPTER_AERO }}
+      VITE_BASKET_ADAPTER_SLIPSTREAM: ${{ vars.VITE_BASKET_ADAPTER_SLIPSTREAM }}
+      VITE_BASKET_ADAPTER_PANCAKE: ${{ vars.VITE_BASKET_ADAPTER_PANCAKE }}
+      VITE_BASKET_ADAPTER_V4: ${{ vars.VITE_BASKET_ADAPTER_V4 }}
+      VITE_NARA_V4_HOOK: ${{ vars.VITE_NARA_V4_HOOK }}
+      VITE_NARA_V4_POOL_FEE: ${{ vars.VITE_NARA_V4_POOL_FEE }}
+      VITE_NARA_V4_TICK_SPACING: ${{ vars.VITE_NARA_V4_TICK_SPACING }}
+      VITE_UNISWAP_V4_QUOTER: ${{ vars.VITE_UNISWAP_V4_QUOTER }}
+      VITE_NARA_TOKEN: ${{ vars.VITE_NARA_TOKEN }}
+      VITE_NARA_FEE_COLLECTOR: ${{ vars.VITE_NARA_FEE_COLLECTOR }}
+      VITE_CDP_PAYMASTER_URL: ${{ vars.VITE_CDP_PAYMASTER_URL }}
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Verify immutable protected-main origin
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! [[ "$CF_PAGES_COMMIT_SHA" =~ ^[a-fA-F0-9]{40}$ ]]; then
+            echo "release_sha must be a full 40-character commit."
+            exit 1
+          fi
+          if ! [[ "$CHANGE_ID" =~ ^NARA-[0-9]{8}-[a-z0-9-]+$ ]]; then
+            echo "change_id must match NARA-YYYYMMDD-short-name."
+            exit 1
+          fi
+          git fetch origin main
+          git merge-base --is-ancestor "$CF_PAGES_COMMIT_SHA" origin/main
+          verified="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CF_PAGES_COMMIT_SHA" --jq '.commit.verification.verified')"
+          if [ "$verified" != "true" ]; then
+            echo "Release commit is not verified by GitHub."
+            exit 1
+          fi
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Verify repository integrity
+        run: node scripts/check-repository.mjs
+      - name: Install locked dependencies
+        run: npm ci --prefix app
+      - name: Dependency audit
+        run: npm audit --prefix app --audit-level=high
+      - name: Build gated Pages artifact and Functions
+        run: npm run build:cf --prefix app
+      - name: Hash deployment artifact
+        id: artifact
+        working-directory: app
+        shell: bash
+        run: echo "hash=$(node scripts/hash-dist.mjs dist)" >> "$GITHUB_OUTPUT"
+      - name: Deploy production
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: >-
+          npx wrangler pages deploy dist
+          --project-name "$CLOUDFLARE_PAGES_PROJECT"
+          --branch main
+          --commit-hash "$CF_PAGES_COMMIT_SHA"
+          --commit-dirty=false
+      - name: Record immutable deployment evidence
+        id: deployment
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          npx wrangler pages deployment list --project-name "$CLOUDFLARE_PAGES_PROJECT" --environment production --json > .tmp/deployments.json
+          node scripts/record-deployment.mjs .tmp/deployments.json "$CF_PAGES_COMMIT_SHA" main "${{ steps.artifact.outputs.hash }}"
+      - name: Verify immutable deployment
+        working-directory: app
+        run: >-
+          node scripts/check-deployment.mjs
+          "${{ steps.deployment.outputs.deployment_url }}"
+          --mode="$NARA_RELEASE_MODE"
+          --sha="$CF_PAGES_COMMIT_SHA"
+      - name: Verify user-facing production URL
+        working-directory: app
+        env:
+          DEPLOY_VERIFY_ATTEMPTS: "18"
+          DEPLOY_VERIFY_INTERVAL_MS: "10000"
+        run: node scripts/check-deployment.mjs "$TARGET_URL" --mode="$NARA_RELEASE_MODE" --sha="$CF_PAGES_COMMIT_SHA"
+      - name: Record release identity
+        shell: bash
+        run: |
+          echo "## Release identity" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Change-ID:** \`$CHANGE_ID\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Mode:** \`$NARA_RELEASE_MODE\`" >> "$GITHUB_STEP_SUMMARY"

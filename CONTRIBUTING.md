@@ -20,7 +20,7 @@ git submodule update --init --recursive
 & "$env:USERPROFILE\.foundry\bin\forge.exe" build
 & "$env:USERPROFILE\.foundry\bin\forge.exe" test
 npm ci --prefix app
-npm run check --prefix app
+npm run build:cf --prefix app
 ```
 
 Default contract tests require no wallet or RPC endpoint. Base fork tests require

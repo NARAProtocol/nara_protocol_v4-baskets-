@@ -8,6 +8,12 @@
 CG_API_KEY=CG-your-key-here
 CG_API_PLAN=demo
 
+# Optional Coinbase onramp. Keep disabled unless the server-side origin allowlist
+# and Cloudflare WAF rate limit are configured.
+CDP_API_KEY_ID=
+CDP_API_KEY_SECRET=
+ONRAMP_ALLOWED_ORIGINS=http://127.0.0.1:4175
+
 # Optional local adapter overrides. Production should set every adapter deployed
 # and registered in each basket manager.
 # VITE_BASKET_ADAPTER_AERO=0x...

@@ -82,7 +82,7 @@ $env:FOUNDRY_PROFILE = "ci"
   --match-contract NARAImmutableBasketPositionManagerV1InvariantTest
 Remove-Item Env:FOUNDRY_PROFILE
 npm ci --prefix app
-npm run check --prefix app
+npm run build:cf --prefix app
 npm audit --prefix app --audit-level=high
 git diff --check
 git status --short
@@ -120,6 +120,9 @@ Never collapse these states into `live`.
   tested, and reviewed composite route.
 - Never weaken review screens or neutral basket presentation to increase
   conversion.
+- Publish the basket app only through the protected GitHub workflows documented
+  in [`CLOUDFLARE_PAGES_RELEASES.md`](CLOUDFLARE_PAGES_RELEASES.md). Never label
+  a local or unmerged checkout as Cloudflare `main`.
 
 ## Cross-repository order
 

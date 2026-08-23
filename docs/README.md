@@ -13,6 +13,9 @@ app, deployment, and maintenance detail.
 4. [`../app/README.md`](../app/README.md) — preview app setup and fail-closed
    production gates.
 
+5. [`CLOUDFLARE_PAGES_RELEASES.md`](CLOUDFLARE_PAGES_RELEASES.md) - GitHub-only
+   development, production promotion, deployment evidence, and rollback.
+
 ## Operations and evidence
 
 | Document | Purpose |
@@ -24,6 +27,7 @@ app, deployment, and maintenance detail.
 | [`releases/NARA-20260729-baskets-v2-alignment.md`](releases/NARA-20260729-baskets-v2-alignment.md) | Current cross-repository release state and downstream handoff |
 | [`REPOSITORY_MAINTENANCE.md`](REPOSITORY_MAINTENANCE.md) | Mandatory source/config/app/documentation synchronization |
 | [`UI_UX_NEUTRAL_ACTION_HIERARCHY.md`](UI_UX_NEUTRAL_ACTION_HIERARCHY.md) | Neutral action and legal UX guardrails |
+| [`CLOUDFLARE_PAGES_RELEASES.md`](CLOUDFLARE_PAGES_RELEASES.md) | Cloudflare development, production, smoke, evidence, and rollback runbook |
 
 ## App rules
 

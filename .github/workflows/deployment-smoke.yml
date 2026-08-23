@@ -1,0 +1,59 @@
+name: Deployment smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: HTTPS deployment URL to verify
+        required: true
+        type: string
+      release_mode:
+        description: Expected fail-closed release mode
+        required: true
+        default: preview
+        type: choice
+        options:
+          - preview
+          - activated
+      commit_sha:
+        description: Optional full commit SHA; defaults to the workflow commit
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nara-baskets-deployment-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deployed-revision:
+    name: deployment · exact revision · headers · functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_URL: ${{ inputs.url }}
+      EXPECTED_MODE: ${{ inputs.release_mode }}
+      EXPECTED_SHA: ${{ inputs.commit_sha || github.sha }}
+      DEPLOY_VERIFY_ATTEMPTS: "30"
+      DEPLOY_VERIFY_INTERVAL_MS: "10000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Require deployment URL
+        shell: bash
+        run: |
+          if [ -z "$TARGET_URL" ]; then
+            echo "Set CLOUDFLARE_PRODUCTION_URL and CLOUDFLARE_DEVELOPMENT_URL as repository variables, or provide url manually."
+            exit 1
+          fi
+      - name: Verify exact deployment
+        working-directory: app
+        run: node scripts/check-deployment.mjs "$TARGET_URL" --mode="$EXPECTED_MODE" --sha="$EXPECTED_SHA"

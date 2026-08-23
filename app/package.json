@@ -7,15 +7,20 @@
     "dev": "vite",
     "dev:cf": "wrangler pages dev --port 4175",
     "build": "tsc --noEmit && vite build",
-    "check": "npm run test:builders && npm run check:copy && npm run check:launch-config && npm run build",
+    "build:functions": "wrangler pages functions build functions --outdir .tmp/functions-build --project-directory . --minify",
+    "build:cf": "node scripts/build-cloudflare.mjs",
+    "check": "npm run test:builders && npm run check:copy && npm run check:launch-config && npm run build && npm run build:functions && npm run check:dist",
     "check:copy": "node scripts/check-copy.mjs",
+    "check:dist": "node scripts/check-dist.mjs",
     "check:launch-config": "node scripts/check-launch-parity.mjs",
     "check:manifest-env": "node scripts/check-manifest-env.mjs",
+    "check:preview-env": "node scripts/check-preview-env.mjs",
     "check:prod-env": "node scripts/check-prod-env.mjs",
+    "check:deployment": "node scripts/check-deployment.mjs",
     "test:builders": "esbuild src/shared/baskets.test.ts --bundle --platform=node --format=esm --define:import.meta.env={} --outfile=.tmp/baskets.test.mjs && node .tmp/baskets.test.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "deploy:cf:prod": "npm run check:copy && npm run check:launch-config && npm run check:prod-env && npm run check:manifest-env && npm audit --audit-level=high && npm run build && wrangler pages deploy dist --project-name nara-baskets --branch main"
+    "verify:cf:production": "npm run check:prod-env && npm run check:manifest-env && npm audit --audit-level=high && npm run check"
   },
   "repository": {
     "type": "git",

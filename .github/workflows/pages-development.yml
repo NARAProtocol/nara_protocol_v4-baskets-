@@ -1,0 +1,116 @@
+name: Pages development
+
+on:
+  workflow_run:
+    workflows:
+      - Baskets CI
+    branches:
+      - main
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nara-baskets-pages-development
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: development · deploy verified main
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: cloudflare-development
+      url: ${{ vars.CLOUDFLARE_DEVELOPMENT_URL }}
+    env:
+      NARA_RELEASE_MODE: preview
+      NARA_PRODUCTION_BRANCH: main
+      CF_PAGES_BRANCH: development
+      CF_PAGES_COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'nara-baskets' }}
+      TARGET_URL: ${{ vars.CLOUDFLARE_DEVELOPMENT_URL || 'https://development.nara-baskets.pages.dev' }}
+      VITE_RAINBOW_PROJECT_ID: ${{ vars.VITE_RAINBOW_PROJECT_ID }}
+      VITE_WALLETCONNECT_PROJECT_ID: ${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}
+      VITE_USE_FORK: "false"
+      VITE_BASKET_MANAGER_BASE: ${{ vars.VITE_BASKET_MANAGER_BASE }}
+      VITE_BASKET_MANAGER_AI: ${{ vars.VITE_BASKET_MANAGER_AI }}
+      VITE_BASKET_MANAGER_MEME: ${{ vars.VITE_BASKET_MANAGER_MEME }}
+      VITE_BASKET_MANAGER_DEFI: ${{ vars.VITE_BASKET_MANAGER_DEFI }}
+      VITE_BASKET_STATUS_BASE: preview
+      VITE_BASKET_STATUS_AI: preview
+      VITE_BASKET_STATUS_MEME: preview
+      VITE_BASKET_STATUS_DEFI: preview
+      VITE_BASKET_ADAPTER: ${{ vars.VITE_BASKET_ADAPTER }}
+      VITE_BASKET_ADAPTER_AERO: ${{ vars.VITE_BASKET_ADAPTER_AERO }}
+      VITE_BASKET_ADAPTER_SLIPSTREAM: ${{ vars.VITE_BASKET_ADAPTER_SLIPSTREAM }}
+      VITE_BASKET_ADAPTER_PANCAKE: ${{ vars.VITE_BASKET_ADAPTER_PANCAKE }}
+      VITE_BASKET_ADAPTER_V4: ${{ vars.VITE_BASKET_ADAPTER_V4 }}
+      VITE_NARA_V4_HOOK: ${{ vars.VITE_NARA_V4_HOOK }}
+      VITE_NARA_V4_POOL_FEE: ${{ vars.VITE_NARA_V4_POOL_FEE }}
+      VITE_NARA_V4_TICK_SPACING: ${{ vars.VITE_NARA_V4_TICK_SPACING }}
+      VITE_UNISWAP_V4_QUOTER: ${{ vars.VITE_UNISWAP_V4_QUOTER }}
+      VITE_NARA_TOKEN: ${{ vars.VITE_NARA_TOKEN }}
+      VITE_NARA_FEE_COLLECTOR: ${{ vars.VITE_NARA_FEE_COLLECTOR }}
+      VITE_CDP_PAYMASTER_URL: ${{ vars.VITE_CDP_PAYMASTER_URL }}
+    steps:
+      - name: Checkout exact CI commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --prefix app
+      - name: Dependency audit
+        run: npm audit --prefix app --audit-level=high
+      - name: Build fail-closed Pages artifact and Functions
+        run: npm run build:cf --prefix app
+      - name: Hash deployment artifact
+        id: artifact
+        working-directory: app
+        shell: bash
+        run: echo "hash=$(node scripts/hash-dist.mjs dist)" >> "$GITHUB_OUTPUT"
+      - name: Deploy stable development preview
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: >-
+          npx wrangler pages deploy dist
+          --project-name "$CLOUDFLARE_PAGES_PROJECT"
+          --branch development
+          --commit-hash "$CF_PAGES_COMMIT_SHA"
+          --commit-dirty=false
+      - name: Record immutable deployment evidence
+        id: deployment
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          npx wrangler pages deployment list --project-name "$CLOUDFLARE_PAGES_PROJECT" --environment preview --json > .tmp/deployments.json
+          node scripts/record-deployment.mjs .tmp/deployments.json "$CF_PAGES_COMMIT_SHA" development "${{ steps.artifact.outputs.hash }}"
+      - name: Verify immutable deployment
+        working-directory: app
+        run: >-
+          node scripts/check-deployment.mjs
+          "${{ steps.deployment.outputs.deployment_url }}"
+          --mode=preview
+          --sha="$CF_PAGES_COMMIT_SHA"
+      - name: Verify stable development URL
+        working-directory: app
+        env:
+          DEPLOY_VERIFY_ATTEMPTS: "18"
+          DEPLOY_VERIFY_INTERVAL_MS: "10000"
+        run: node scripts/check-deployment.mjs "$TARGET_URL" --mode=preview --sha="$CF_PAGES_COMMIT_SHA"
