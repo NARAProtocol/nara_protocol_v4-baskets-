@@ -1,6 +1,13 @@
 # Validation Status
 
-Last validated: 2026-08-09.
+Last validated: 2026-08-30 documentation convergence. The test results below
+retain their original execution dates unless a newer date is stated.
+
+Protocol documentation dependency:
+`dae88079dd336e22bdefde6f45e3b01389d554cb`
+(`NARA-20260830-documentation-convergence`). The upstream canonical pool uses
+real assets in technical live testing. Basket contracts remain undeployed and
+the app remains preview-only.
 
 No independent audit is claimed. Current assurance is repository tests, fork
 verification, and documented internal multi-agent review.
@@ -63,9 +70,9 @@ $rpc = ($rpcLine -split '=', 2)[1].Trim().Trim('"').Trim("'")
 
 ```text
 Forge version: 1.4.3-stable, called by absolute path.
-Build: pass.
-Deterministic non-fork suite: 168 passed, 0 failed, 1 environment-dependent
-skip (169 total). Fork-named suites were excluded from this command.
+Build and deployable bytecode-size check: pass.
+Deterministic non-fork suite: 169 passed, 0 failed, 1 environment-dependent
+skip (170 total). Fork-named suites were excluded from this command.
 CI invariant suite: 4 passed, 0 failed, 0 skipped. Each of the three stateful
 invariants ran 256 campaigns and 16,384 calls; the rescue fuzz property ran
 1,000 cases.
@@ -83,7 +90,7 @@ PancakeV3BasketAdapterV1Test                - 10 tests
 UniswapV3BasketAdapterV1Test                - 9 tests
 UniswapV4BasketAdapterV1Test                - 13 tests
 DeployMainnetReadyTest                      - 2 tests
-DisabledLegacyDeploymentTest                - 3 tests
+DisabledLegacyDeploymentTest                - 4 tests
 VerifyDeployedBasketTest                    - 8 tests
 ```
 
@@ -173,14 +180,14 @@ burn, both referral claims, permissionless fee sweeps across every asset, and a
 final assertion that all balances, accounted claims, liabilities, and deficits
 are zero.
 
-Frontend validation for `app/` on 2026-08-08:
+Frontend validation for `app/` was rerun on 2026-08-31:
 
 ```powershell
-npm run test:builders   # pass
-npm run check:copy      # pass
+npm run test:builders       # pass
+npm run check:copy          # pass
 npm run check:launch-config # pass
-npm run build           # pass
-npm run check           # pass
+npm run build               # pass
+npm run check               # pass
 ```
 
 The builder test declares and pins its direct `esbuild` dependency, and a
@@ -219,6 +226,10 @@ patched Axios/`ws` overrides. The focused compatible updates removed the
 `nanoid`, `socket.io-parser`, and `undici` High advisories.
 Do not claim zero advisories; do not use `npm audit fix --force` without a
 reviewed RainbowKit/Wagmi migration and wallet regression plan.
+
+Repository verification on 2026-08-31 passed across 105 files, including
+tracked-secret patterns, local Markdown links, JSON parsing, Action SHA pins,
+and submodule pins. `forge fmt --check` and `git diff --check` passed.
 
 The Base adapter fork suites were rerun single-threaded at Base block
 49,398,601 on 2026-08-01: 31 passed, 0 failed, 0 skipped across Uniswap V3,

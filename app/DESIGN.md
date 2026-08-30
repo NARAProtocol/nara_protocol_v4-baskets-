@@ -15,7 +15,12 @@ ERC-20 symbol, contract identifiers, environment variables, and code keys stay
 
 Not a fund. Not a recommender. Not a casino. Not a trading bot.
 
-Professional face: **quiet, precise, non-custodial, on-chain, Base-native.**
+Professional face: **quiet, precise, wallet-confirmed, on-chain, Base-native.**
+
+"Wallet-confirmed" means this interface does not store signing keys and each
+write requires the connected wallet's confirmation. Do not use
+"non-custodial" as a blanket legal characterization: the receipt holder owns
+the ERC-721 while the basket contract holds the recorded underlying tokens.
 
 ---
 
@@ -181,7 +186,7 @@ Button text: sentence case, not ALL CAPS. Font: Inter.
 - Subline: **$NARA category baskets on Base. One transaction. On-chain execution.**
 
 ### Status messages
-- Pre-launch: **Preview mode. Buying opens after contract deployment.**
+- Pre-launch: **Preview mode. Buying remains disabled until basket contracts are deployed, verified, and explicitly activated.**
 - Select prompt: **Select a basket to view composition, execution route, and fees.**
 
 ### Buy panel labels
@@ -198,8 +203,9 @@ Button text: sentence case, not ALL CAPS. Font: Inter.
 - Withdraw: **Withdraw Tokens**
 
 ### Legal / disclaimer copy
-- "Non-custodial. On chain. You hold the receipt NFT; the basket contract holds the underlying tokens."
+- "Wallet-confirmed. On chain. You hold the receipt NFT; the basket contract holds the recorded underlying tokens."
 - "Exit to USDC or withdraw the constituent tokens directly from the contract."
+- "Displayed USDC gross exit quotes and gross changes are estimates refreshed when positions load, before basket sell fees and gas; they are not account statements or execution amounts."
 
 ### Banned copy
 - "Recommended", "Best", "Safest", "Top", "Popular", "Trending"
@@ -249,7 +255,13 @@ Button text: sentence case, not ALL CAPS. Font: Inter.
 
 ## Routing Architecture
 
-> ⚠️ **NARA's own pool is special — taxed Uniswap v4, not a plain pool.**
+> ⚠️ **Technical live testing with real assets — not basket availability.**
+> The canonical NARA v4 contracts and NARA/USDC pool use real assets on Base.
+> Basket managers, the V2 collector, and the five-adapter set are not deployed;
+> the app stays preview-only. Technical deployment or testing is not a claim of
+> public availability, safety, audit completion, or legal approval.
+>
+> **NARA's own pool is special — taxed Uniswap v4, not a plain pool.**
 > NARA's designed liquidity home is a taxed **Uniswap v4** pool (`NARALiquidityGrowthHook` +
 > `NARALiquidityGrowthVault` in `nara-protocol-hardhat/contracts/v4/`). Only the registered
 > canonical Hook PoolKey is taxed; ordinary NARA transfers and other pools are not. The default
@@ -270,12 +282,12 @@ are published as live. Do not call them live until the basket Base manifests
 exist and pass `check:manifest-env`. Adapters cannot be added after a basket is
 deployed.
 
-| Adapter | Base venue (24h vol) | Router (Base, verified) | Interface |
+| Adapter | Base venue | Router (Base, verify again before deployment) | Interface |
 |---------|---------|---------|---------|
-| UniswapV3BasketAdapterV1 | Uniswap V3 (~$114M) | `0x2626664c2603336E57B271c5C0b26F421741e481` | `exactInputSingle`, fee, no deadline |
-| AerodromeBasketAdapterV1 | Aerodrome AMM (~$10M) | `0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43` | `swapExactTokensForTokens`, Route[] |
-| AerodromeSlipstreamBasketAdapterV1 | **Aerodrome Slipstream CL (~$677M, #1 on Base)** | `0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5` | `exactInputSingle`, **tickSpacing** + deadline |
-| PancakeV3BasketAdapterV1 | **PancakeSwap V3 (~$169M, #2 on Base)** | `0x1b81D678ffb9C0263b24A97847620C99d213eB14` | `exactInputSingle`, fee + deadline |
+| UniswapV3BasketAdapterV1 | Uniswap V3 | `0x2626664c2603336E57B271c5C0b26F421741e481` | `exactInputSingle`, fee, no deadline |
+| AerodromeBasketAdapterV1 | Aerodrome AMM | `0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43` | `swapExactTokensForTokens`, Route[] |
+| AerodromeSlipstreamBasketAdapterV1 | Aerodrome Slipstream CL | `0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5` | `exactInputSingle`, **tickSpacing** + deadline |
+| PancakeV3BasketAdapterV1 | PancakeSwap V3 | `0x1b81D678ffb9C0263b24A97847620C99d213eB14` | `exactInputSingle`, fee + deadline |
 | UniswapV4BasketAdapterV1 | NARA taxed v4 hook pool | `0x6ff5693b99212da76ad316178a184ab56d299b43` + Permit2 `0x000000000022D473030F116dDEE9F6B43aC78BA3` | Universal Router `V4_SWAP`; pool config is immutable |
 
 Quoters (for frontend preflight): Slipstream QuoterV2 `0x254cf9e1e6e233aa1ac962cb9b05b2cfeaae15b0`;
@@ -328,6 +340,11 @@ VITE_NARA_V4_HOOK
 VITE_NARA_V4_POOL_FEE
 VITE_NARA_V4_TICK_SPACING
 VITE_UNISWAP_V4_QUOTER         # optional override; Base default is built in
+VITE_NARA_ENGINE_V4             # optional Graduation dependency
+VITE_NARA_POSITION_NFT_V4       # optional Graduation dependency
+VITE_NARA_ROUTER_V4             # optional Graduation dependency
+VITE_NARA_GRADUATION_INTEGRATION_READY # default false; explicit reviewed handoff gate
+VITE_NARA_GRADUATION_ORIGIN_COMMIT      # full 40-character immutable handoff commit
 VITE_RAINBOW_PROJECT_ID
 CG_API_PLAN = "demo"         # in wrangler.toml [vars]
 CG_API_KEY                   # secret — wrangler pages secret put CG_API_KEY
@@ -337,10 +354,12 @@ CG_API_KEY                   # secret — wrangler pages secret put CG_API_KEY
 to `live` or `exit_only` in production. Missing or invalid status values are
 preview-only and must never enable buying.
 
-The optional Graduation flow is outside the baskets-only launch scope. Keep it
-disabled until canonical position NFT and router contracts are separately
-deployed and verified. Do not deploy unrelated protocol periphery or rebuild
-the lockboard merely to enable Graduation.
+The optional Graduation flow is outside the basket release scope. The Position
+NFT Phase-2 baseline is deployed, tested, source-verified, and Safe-finalized,
+but its canonical manifest remains `integrationReady: false`. Keep Graduation
+disabled until the required router, value-bearing smoke, monitored hold, and
+immutable downstream handoff are complete. Do not deploy unrelated protocol
+periphery or rebuild the lockboard merely to enable Graduation.
 
 ---
 

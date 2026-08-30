@@ -5,6 +5,7 @@ import {
   buildPartialSellParams,
   buildSellParams,
   effectiveNaraUsdcDepth,
+  graduationHandoffReady,
   isViteAddress,
   LAUNCH_REFERRER,
   MAX_USER_SLIPPAGE_BPS,
@@ -54,6 +55,38 @@ assertEqual(isViteAddress(ZERO), false, "address validator rejects zero address 
 assertEqual(isViteAddress("0x1234"), false, "address validator rejects short addresses");
 assertEqual(isViteAddress("not-an-address"), false, "address validator rejects malformed addresses");
 assertEqual(isViteAddress(undefined), false, "address validator rejects missing env values");
+
+const ORIGIN_COMMIT = "dae88079dd336e22bdefde6f45e3b01389d554cb";
+assertEqual(graduationHandoffReady({}), false, "missing Graduation handoff fails closed");
+assertEqual(
+  graduationHandoffReady({ VITE_NARA_GRADUATION_INTEGRATION_READY: "true" }),
+  false,
+  "readiness flag without immutable origin commit fails closed",
+);
+assertEqual(
+  graduationHandoffReady({
+    VITE_NARA_GRADUATION_INTEGRATION_READY: "false",
+    VITE_NARA_GRADUATION_ORIGIN_COMMIT: ORIGIN_COMMIT,
+  }),
+  false,
+  "origin commit without readiness approval fails closed",
+);
+assertEqual(
+  graduationHandoffReady({
+    VITE_NARA_GRADUATION_INTEGRATION_READY: "true",
+    VITE_NARA_GRADUATION_ORIGIN_COMMIT: "short",
+  }),
+  false,
+  "invalid Graduation origin commit fails closed",
+);
+assertEqual(
+  graduationHandoffReady({
+    VITE_NARA_GRADUATION_INTEGRATION_READY: " TRUE ",
+    VITE_NARA_GRADUATION_ORIGIN_COMMIT: ORIGIN_COMMIT,
+  }),
+  true,
+  "explicit readiness plus a full immutable origin commit unlocks the address checks",
+);
 
 assertEqual(normalizeBasketStatus(undefined), "preview", "missing basket status fails closed to preview");
 assertEqual(normalizeBasketStatus("unexpected"), "preview", "invalid basket status fails closed to preview");

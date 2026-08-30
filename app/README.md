@@ -10,6 +10,16 @@ Value-bearing actions remain disabled until verified Base deployment manifests,
 fresh addresses, explicit basket status values, and production environment
 parity all pass.
 
+The upstream NARA v4 contracts and canonical NARA/USDC pool use real assets in
+technical live testing. That does not activate this app. The Position NFT
+Phase-2 baseline is deployed, tested, source-verified, and Safe-finalized, but
+its canonical manifest remains `integrationReady: false`; Graduation therefore
+stays hidden alongside every other unavailable consumer flow.
+
+This repository contains no evidence of completed jurisdiction-specific
+qualified legal review. Preview status is a technical control, not a legal
+approval or availability statement.
+
 ## Required reading
 
 1. [`AGENTS.md`](AGENTS.md)
@@ -25,8 +35,10 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-Keep `.env` and `.dev.vars` local. Do not commit wallet identifiers, API keys,
-private RPC URLs, deployment secrets, or production credentials.
+Every `VITE_*` variable is compiled into the public browser bundle and must be
+treated as public configuration, never as a secret. Keep `.env` and `.dev.vars`
+local. Put server-only API keys in the Pages secret store; do not commit API
+keys, private RPC URLs, deployment secrets, or production credentials.
 
 ## Verification
 

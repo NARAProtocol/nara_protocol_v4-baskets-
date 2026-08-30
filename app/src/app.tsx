@@ -2408,7 +2408,12 @@ function PositionCard({
 
       <div className="nb-pos-metrics">
         <div className="nb-pos-metric">
-          <div className="nb-pos-metric-label">Current</div>
+          <div
+            className="nb-pos-metric-label"
+            title="Gross route quote before basket sell fee and gas; it can change or fail. Legacy WETH entry cost uses a current conversion quote and may fall back to the current gross exit quote if unavailable."
+          >
+            Est. gross exit quote <span aria-label="Estimate information">(i)</span>
+          </div>
           <div className="nb-pos-metric-value">
             {position.quotesLoaded ? `$${formatUsdc(position.currentValueUsdc)}` : "…"}
           </div>
@@ -2418,7 +2423,12 @@ function PositionCard({
           <div className="nb-pos-metric-value">${formatUsdc(position.netCostUsdc)}</div>
         </div>
         <div className="nb-pos-metric">
-          <div className="nb-pos-metric-label">P&amp;L</div>
+          <div
+            className="nb-pos-metric-label"
+            title="Gross route quote minus recorded net entry cost, before basket sell fee and gas. It can change or fail; legacy WETH entry cost uses a current conversion quote with a gross-quote fallback."
+          >
+            Est. gross change <span aria-label="Estimate information">(i)</span>
+          </div>
           <div className={`nb-pos-metric-value nb-pnl-${pnlClass}`}>
             {position.quotesLoaded ? (
               <>
@@ -3353,7 +3363,7 @@ function ShareCardModal({ data, onClose }: { data: BasketShareData; onClose: () 
 
       ctx.fillStyle = muted;
       ctx.font = "500 18px Inter, system-ui, sans-serif";
-      ctx.fillText("On-chain · Non-custodial · naraprotocol.io", left, H - pad - 40);
+      ctx.fillText("On-chain receipt · Wallet-confirmed · naraprotocol.io", left, H - pad - 40);
     };
 
     if (document.fonts?.ready) {
@@ -3377,7 +3387,7 @@ function ShareCardModal({ data, onClose }: { data: BasketShareData; onClose: () 
     }, "image/png");
   };
 
-  const shareText = `I bought the ${data.basketName} basket on NARA — on-chain, non-custodial.`;
+  const shareText = `I created a ${data.basketName} basket receipt through NARA — on chain and wallet-confirmed.`;
 
   const handleShare = async () => {
     if (canShareApi) {
@@ -4361,7 +4371,7 @@ export default function App() {
         <div className="nb-swap-wrap" style={{ marginBottom: 16 }}>
           <div className="nb-flash neutral" style={{ marginBottom: 0 }}>
             {hasPreviewBasket
-              ? "Preview mode. Buying remains disabled until basket contracts are deployed, verified, and explicitly activated."
+              ? "Preview mode. Buying remains disabled until basket contracts are deployed, verified, and explicitly activated. Upstream core live testing uses real assets; it does not activate baskets."
               : "New buys are disabled. Existing receipts can still be reviewed in Portfolio."}
           </div>
         </div>
@@ -4424,11 +4434,21 @@ export default function App() {
                     <div className="nb-pos-metric-value">{positions.length}</div>
                   </div>
                   <div className="nb-pos-metric">
-                    <div className="nb-pos-metric-label">Total value</div>
+                    <div
+                      className="nb-pos-metric-label"
+                      title="Gross route quotes before basket sell fees and gas; they can change or fail. Legacy WETH entry cost uses a current conversion quote and may fall back to the current gross exit quote if unavailable."
+                    >
+                      Est. gross exit quote <span aria-label="Estimate information">(i)</span>
+                    </div>
                     <div className="nb-pos-metric-value">${formatUsdc(totalValue)}</div>
                   </div>
                   <div className="nb-pos-metric">
-                    <div className="nb-pos-metric-label">Unrealised P&amp;L</div>
+                    <div
+                      className="nb-pos-metric-label"
+                      title="Gross route quotes minus recorded net entry costs, before basket sell fees and gas. They can change or fail; legacy WETH entry cost uses a current conversion quote with a gross-quote fallback."
+                    >
+                      Est. gross change <span aria-label="Estimate information">(i)</span>
+                    </div>
                     <div
                       className={`nb-pos-metric-value ${
                         totalPnl > 0n ? "nb-pnl-up" : totalPnl < 0n ? "nb-pnl-down" : "nb-pnl-flat"
@@ -4502,11 +4522,12 @@ export default function App() {
       <div className="nb-swap-wrap">
         <div className="nb-protocol-note" style={{ maxWidth: "100%" }}>
           <p>
-            Non-custodial. On chain. You hold the receipt NFT; the basket contract holds the
+            Wallet-confirmed. On chain. You hold the receipt NFT; the basket contract holds the recorded
             underlying tokens. After a basket is explicitly activated as live or exit-only, its exit paths are a
             USDC sell when routes have liquidity or a direct request to withdraw constituent tokens. Preview-only
             baskets permit no exit writes. Transactions can fail, and token restrictions can block a transfer.
-            Eligible basket $NARA can also be withdrawn and locked through a separate review after activation.
+            Graduation remains unavailable until the Position NFT manifest is integration-ready and the required
+            router, value-bearing smoke, monitored hold, and immutable downstream handoff all pass.
             Not financial advice. Digital asset
             values can go down to zero.
           </p>
