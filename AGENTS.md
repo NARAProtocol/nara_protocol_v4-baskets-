@@ -23,6 +23,28 @@ documentation when the user-visible state changes. The local
 In the FIELD workspace, the complete order and handoff schema are in
 `../docs/NARA_CROSS_REPOSITORY_RELEASE_PROTOCOL.md`.
 
+## Cold-AI Current-State Fast Path
+
+Do not rediscover or guess the upstream documentation state. For the
+`NARA-20260830-documentation-convergence` handoff, use the protected protocol
+merge `dae88079dd336e22bdefde6f45e3b01389d554cb`, then verify any changing
+deployment fact against its named manifest before use.
+
+- Active Base token: `0xB6333F5D4cEd8dffA80F3F13697D6aA3BB3f19c1`.
+- The canonical NARA/USDC pool uses real assets in technical live testing. That
+  does not activate baskets or establish public product availability.
+- The Position NFT Phase-2 baseline is deployed, tested under its recorded
+  release gates, source-verified, and Safe-finalized. Its canonical manifest is
+  still `integrationReady: false`, so basket Graduation and other consumer
+  integrations stay disabled.
+- Basket managers, the V2 fee collector, and the five-adapter production set
+  are not deployed. The app remains preview-only.
+
+This repository contains no evidence of completed jurisdiction-specific
+qualified legal review. Do not activate or market a consumer flow without a
+written review covering the relevant entity, jurisdictions, audience,
+distribution route, disclosures, and complete user journey.
+
 ## Required Maintenance Protocol
 
 Before changing code-derived, deployment-derived, or user-facing facts, read and
@@ -32,12 +54,14 @@ synchronized in the same pull request.
 
 ## Status
 
-- Basket contracts are active v4-adjacent product code, but deployment status
-  must be verified before making live claims.
+- Basket contracts are implemented and tested v4-adjacent product code, but
+  they are not deployed and must not be described as live.
 - The app is implemented but must remain in preview until verified Base
   deployment manifests and production environment parity pass.
-- This package integrates with active NARA v4 only through deployed addresses
-  and fee routes documented in this repo.
+- The upstream NARA v4 core and canonical pool are in technical live testing
+  with real assets. This package integrates only through verified addresses and
+  fee routes documented in this repo; upstream activity does not activate this
+  package.
 - If a folder or deployment status is unclear, mark it unknown and verify before
   use.
 

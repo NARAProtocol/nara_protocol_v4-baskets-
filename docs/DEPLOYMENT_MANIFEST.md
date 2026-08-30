@@ -74,8 +74,8 @@ Each saved JSON object must contain:
 | `buyFeeBps` | integer | Exact immutable value |
 | `sellFeeBps` | integer | Exact immutable value |
 | `withdrawFeeBps` | integer | Exact immutable value |
-| `holdingFeeBps` | integer | `0` for the first public launch |
-| `referralShareBps` | integer | `0` for the first public launch |
+| `holdingFeeBps` | integer | `0` for the first authorized basket activation |
+| `referralShareBps` | integer | `0` for the first authorized basket activation |
 | `maxWeightDeviationBps` | integer | Exact immutable value |
 | `minNaraWeightBps` | integer | Exact immutable value |
 | `minInputAmount` | decimal string | Positive raw payment-token-unit floor |

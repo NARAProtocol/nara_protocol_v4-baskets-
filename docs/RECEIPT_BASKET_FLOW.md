@@ -287,8 +287,10 @@ NARA -> engine.depositRewards
 WETH -> unwrap -> engine.notifyEthRewards
 ```
 
-Do not route random basket assets directly into `engine.notifyTokenRewards` by
-default.
+Do not route any basket asset into `engine.notifyTokenRewards` on the current
+deployed Engine. Its generic ERC-20 notifier is prohibited. A future
+non-native reward-asset path requires a separate reviewed architecture and
+deployment.
 
 ## Slippage and execution controls
 

@@ -37,7 +37,9 @@ flows, or design work, read **both** of the following in this order:
 
 ## Current Launch Scope
 
-- The NARA basket app is the only frontend in the current launch scope.
+- The NARA basket app is the only frontend in the basket release scope. The
+  upstream NARA v4 core and canonical pool are separately in technical live
+  testing with real assets; that state does not make any basket available.
 - Basket managers, fee collector, and five-adapter production set are not live
   until Base deployment manifests exist and pass `check:manifest-env`.
 - Missing or invalid `VITE_BASKET_STATUS_*` values must remain preview/disabled;
@@ -52,9 +54,11 @@ flows, or design work, read **both** of the following in this order:
   unless a full migration is explicitly reviewed. Current patched support
   versions are Viem 2.55.10, Vite 8.1.5, and Wrangler 4.120.0. Do not run
   `npm audit fix --force` as a routine fix.
-- The optional Graduation flow does not gate the basket launch. Keep it hidden
-  unless canonical position NFT and router contracts are separately deployed
-  and verified.
+- The optional Graduation flow does not gate the basket launch. The Position
+  NFT Phase-2 baseline is deployed, tested, source-verified, and Safe-finalized,
+  but its canonical manifest remains `integrationReady: false`; the required
+  router and immutable downstream handoff are also not available to this app.
+  Keep Graduation hidden until all integration gates pass.
 - Do not rebuild the lockboard for basket readiness. Lotto and Arena remain
   retired.
 

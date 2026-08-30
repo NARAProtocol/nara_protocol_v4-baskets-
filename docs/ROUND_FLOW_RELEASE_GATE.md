@@ -1,14 +1,16 @@
 # Complete V4 Round-Flow Release Gate
 
-Last updated: 2026-08-09.
+Last updated: 2026-08-30.
 
 ## Current verdict
 
 **Blocked for production. Keep every basket in `preview` or `exit_only`.**
 
-The basket-local source is v4-only. The corrected protocol release and activation
-evidence are immutable at `ce71f4dfc9182ab12e12f9c25e91ec40fdb9cb60`
-and `ba5aaea730b92d8ce12a94926ec076f3fde85982`. Production basket buying remains
+The basket-local source is v4-only. The protected protocol documentation
+handoff is immutable at `dae88079dd336e22bdefde6f45e3b01389d554cb`;
+activation evidence remains `ba5aaea730b92d8ce12a94926ec076f3fde85982`.
+The upstream canonical pool uses real assets in technical live testing, but
+production basket buying remains
 blocked by the missing basket-specific exact-fork round-flow, deployment
 authorization, route/role review, and verified manager manifests. The
 quarantined incident Hook remains forbidden.
@@ -16,7 +18,7 @@ quarantined incident Hook remains forbidden.
 This gate covers the complete value path:
 
 ```text
-quote -> review -> buy -> immutable custody -> fee/reward accounting
+quote -> review -> buy -> receipt-backed contract holdings and accounting
       -> partial exit -> full swap exit or underlying escape
       -> referral claims -> protocol sweeps -> zero residual liabilities
 ```
@@ -56,8 +58,8 @@ A single shared 93,600-second limit does not pass this gate.
 
 Before any basket address or app environment is made production-active:
 
-1. Use protected protocol release
-   `ce71f4dfc9182ab12e12f9c25e91ec40fdb9cb60`, activation evidence
+1. Use protected protocol documentation handoff
+   `dae88079dd336e22bdefde6f45e3b01389d554cb`, activation evidence
    `ba5aaea730b92d8ce12a94926ec076f3fde85982`, and contract/artifact source
    `027af3f06bbe6dea2c187dfd8062e50c228f1c35`.
 2. Keep the quarantined Hook and every retired Stage A address out of basket

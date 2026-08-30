@@ -1,8 +1,16 @@
 # Cold IDE AI Task
 
-> **Scope override (2026-07-26):** use an exact Base-mainnet fork, not Base
-> Sepolia. The current launch is baskets only. Do not deploy lockboard,
-> Graduation/periphery, Lotto, Arena, or another v4 core stack.
+> **Current scope (2026-08-30):** use an exact Base-mainnet fork, not Base
+> Sepolia. Start from protected protocol handoff
+> `dae88079dd336e22bdefde6f45e3b01389d554cb`; never rediscover addresses from
+> chat or old branches. The upstream core and canonical pool are in technical
+> live testing with real assets, while basket contracts remain undeployed and
+> the app remains preview-only. Do not deploy lockboard, Graduation/periphery,
+> Lotto, Arena, or another v4 core stack.
+
+> The Position NFT Phase-2 baseline is deployed, tested, source-verified, and
+> Safe-finalized, but its canonical manifest remains `integrationReady: false`.
+> Do not treat that deployment as authorization to enable Graduation.
 
 ## Objective
 
@@ -160,7 +168,7 @@ engine.notifyEthRewards{value: amount}();
 engine.depositRewards(amount);
 ```
 
-Avoid routing random basket tokens to:
+Do not route any basket token to the current deployed Engine through:
 
 ```solidity
 engine.notifyTokenRewards(token, amount);
@@ -169,8 +177,9 @@ engine.notifyTokenRewards(token, amount);
 Reason:
 
 ```text
-notifyTokenRewards sets token reward state and may affect active position extension behavior.
-Preferred V1 fee route is ETH or NARA.
+The deployed Engine's generic ERC-20 notifier is intentionally prohibited.
+Preferred V1 fee routes are the separately tested ETH and NARA paths. A future
+non-native reward-asset path requires a separate reviewed architecture.
 ```
 
 ## Fix priority

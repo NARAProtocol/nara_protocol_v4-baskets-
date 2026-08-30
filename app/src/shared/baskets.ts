@@ -2,7 +2,7 @@ import { encodeAbiParameters, parseUnits } from "viem";
 
 const viteEnv = import.meta.env as Record<string, string | undefined>;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
-// The first public basket launch has referralShareBps = 0. Keep the app's
+// The first authorized basket activation has referralShareBps = 0. Keep the app's
 // transaction builder explicit and fail closed instead of forwarding ?ref=.
 export const LAUNCH_REFERRER = ZERO_ADDRESS;
 const BPS = 10_000n;
@@ -16,6 +16,12 @@ export const MAX_NARA_DEPTH_FUTURE_SKEW_SECONDS = 15n;
 export function isViteAddress(value: string | null | undefined): value is `0x${string}` {
   const trimmed = value?.trim();
   return !!trimmed && /^0x[a-fA-F0-9]{40}$/.test(trimmed) && trimmed.toLowerCase() !== ZERO_ADDRESS;
+}
+
+export function graduationHandoffReady(env: Record<string, string | undefined>): boolean {
+  const explicitlyReady = env.VITE_NARA_GRADUATION_INTEGRATION_READY?.trim().toLowerCase() === "true";
+  const originCommit = env.VITE_NARA_GRADUATION_ORIGIN_COMMIT?.trim() ?? "";
+  return explicitlyReady && /^[a-fA-F0-9]{40}$/.test(originCommit);
 }
 
 function readViteAddress(key: string): `0x${string}` | null {
@@ -230,13 +236,17 @@ export function validateNaraDepthCapacity(check: NaraDepthCapacityCheck): {
   return { effectiveDepth, maxBasketInput };
 }
 
-// NARA v4 engine + position NFT + router — filled after the v4 protocol stack deploys.
-// "Graduation" (withdraw basket NARA, then lock it in the engine as a position NFT) stays
-// disabled end-to-end until all three are set.
+// NARA v4 engine + Position NFT + router — consumer config remains fail-closed.
+// The Position NFT Phase-2 baseline is deployed and Safe-finalized upstream, but its
+// canonical manifest remains integrationReady:false. "Graduation" (withdraw basket
+// NARA, then lock it in the engine as a Position NFT) stays unavailable until all
+// three addresses and the immutable downstream handoff are separately verified.
 export const NARA_ENGINE_V4 = readViteAddress("VITE_NARA_ENGINE_V4");
 export const NARA_POSITION_NFT_V4 = readViteAddress("VITE_NARA_POSITION_NFT_V4");
 export const NARA_ROUTER_V4 = readViteAddress("VITE_NARA_ROUTER_V4");
-export const NARA_GRADUATION_READY = !!NARA_ENGINE_V4 && !!NARA_POSITION_NFT_V4 && !!NARA_ROUTER_V4;
+const NARA_GRADUATION_HANDOFF_READY = graduationHandoffReady(viteEnv);
+export const NARA_GRADUATION_READY =
+  NARA_GRADUATION_HANDOFF_READY && !!NARA_ENGINE_V4 && !!NARA_POSITION_NFT_V4 && !!NARA_ROUTER_V4;
 
 // ─── Routing types ────────────────────────────────────────────────────────────
 
