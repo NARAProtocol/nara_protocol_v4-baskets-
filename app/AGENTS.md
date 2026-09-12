@@ -18,6 +18,8 @@ flows, or design work, read **both** of the following in this order:
   (keys remain `base` / `ai` / `defi` / `meme` in code)
 - Public brand: **NARA**. Public ticker: **$NARA**. Raw contract symbol and
   technical identifiers remain `NARA`.
+- Canonical brand emblem: 15-Notch Epoch Radar Dial + Monolithic Architectural N on solid `#000000` black canvas (`nara-logo-white.png`).
+- Token icons: Full-bleed solid black (`#000000`) square canvas only (`nara_token_*.png`). No transparent corners.
 - Token list on cards: text rail `$NARA · WETH · cbBTC` — not colored dots
 - All-caps monospace = wrong. Display font for headings, sans for UI text.
 

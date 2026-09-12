@@ -13,6 +13,10 @@ The root public brand is **NARA** and the public ticker is **$NARA**. The raw
 ERC-20 symbol, contract identifiers, environment variables, and code keys stay
 `NARA`; the dollar prefix is presentation copy only.
 
+The canonical brand emblem is the **Dual Concentric Radar Rings + 15-Notch Epoch Dial + Monolithic Architectural N** on full-bleed solid deep black (`#000000`) canvas (`nara-logo-white.png`).
+Official token icon suite is located at `C:\Users\linas\Desktop\NARA_Branding_Package\` and hosted at `https://naraprotocol.com/nara_token_*.png` (and permanent CDN backups).
+All token icons and avatars MUST use solid black (`#000000`) backgrounds—zero transparent corners.
+
 Not a fund. Not a recommender. Not a casino. Not a trading bot.
 
 Professional face: **quiet, precise, non-custodial, on-chain, Base-native.**
@@ -368,3 +372,4 @@ the lockboard merely to enable Graduation.
 8. "DeFi" in the card name — use "FINANCE"
 9. "Base" in the card name — use "CORE"
 10. All-caps everywhere — display font handles emphasis, no uppercase hack
+11. Transparent-corner token icons or white-box cutouts — all official token icons and platform avatars MUST be full-bleed solid black (`#000000`) squares (`nara-logo-white.png`, `nara_token_*.png`).
